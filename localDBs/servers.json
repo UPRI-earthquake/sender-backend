@@ -1,0 +1,50 @@
+{
+    "servers": [
+        {
+            "id": 1,
+            "hostName": "UP Diliman Server",
+            "url": "https://earthquake.science.upd.edu.ph",
+            "isConnected": true,
+            "connectionMessage": "Connected"
+        },
+        {
+            "id": 2,
+            "hostName": "Brgy 1 Server",
+            "url": "https://brgy1.science.upd.edu.ph",
+            "isConnected": false,
+            "connectionMessage": "Not Connected"
+        },
+        {
+            "id": 3,
+            "hostName": "Brgy 2 Server",
+            "url": "https://brgy2.science.upd.edu.ph",
+            "isConnected": true,
+            "connectionMessage": "Connected"
+        },
+        {
+            "hostName": "Brgy 3",
+            "url": "https://brgy3.upd.edu.ph",
+            "isConnected": false,
+            "connectionMessage": "Not Connected",
+            "id": 4
+        },
+        {
+            "hostName": "Brgy 4",
+            "url": "https://earthquake.science.upd.edu.ph",
+            "isConnected": false,
+            "id": 5
+        },
+        {
+            "hostName": "Brgy 5",
+            "url": "brgy5.upd.edu.ph",
+            "isConnected": false,
+            "id": 6
+        },
+        {
+            "hostName": "https://brgy6.upd.edu.ph",
+            "url": "Brgy 6",
+            "isConnected": false,
+            "id": 7
+        }
+    ]
+}
