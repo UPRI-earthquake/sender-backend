@@ -2,11 +2,10 @@
   "name": "rshake-linking-backend",
   "version": "1.0.0",
   "description": "This repository contains the backend code for rshake device-to-account linking",
-  "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server",
-    "dev": "nodemon server"
+    "start": "node ./src/index.js",
+    "dev": "nodemon ./src/index.js"
   },
   "author": "",
   "license": "ISC",
