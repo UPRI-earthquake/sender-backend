@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs')
 const bodyParser = require('body-parser')
+const getmac = require('getmac')
 
 router.use(bodyParser.json())
 
@@ -21,14 +22,29 @@ router.get('/', (req, res) => {
 
 /* POST account information endpoint */
 router.post('/', (req, res) => {
-    fs.writeFile("src/localDBs/accountInfo.json", JSON.stringify(req.body), (err) => {
+    const macAddress = getmac.default(); //get device mac address
+    const reqInfo = req.body; //get input
+
+    const json = 
+        {
+            accountName: reqInfo.accountName,
+            accountPassword: reqInfo.accountPassword,
+            macAddress: macAddress 
+        };
+
+    fs.writeFile("src/localDBs/accountInfo.json", JSON.stringify(json), (err) => {
         if (err)
             console.log(err);
         else {
-            fs.readFile('./localDBs/accountInfo.json', 'utf-8', function(err, jsonString){
-                const data = JSON.parse(jsonString);
-                console.log(data)
-                res.json(data)
+            fs.readFile('src/localDBs/accountInfo.json', 'utf-8', function(err, jsonString){
+                if (err){
+                    console.log(err)
+                }
+                else {
+                    const data = JSON.parse(jsonString);
+                    console.log(data);
+                    res.json(data);
+                }
             })
         }
     });
