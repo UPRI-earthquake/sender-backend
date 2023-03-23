@@ -3,7 +3,6 @@ const cors = require('cors')
 const app = express()
 const bodyParser = require('body-parser')
 const port = 5001 //Specify the port, if necessary
-const getmac = require('getmac')
 
 const accountInfoRouter = require('./routes/accountInfo')
 const deviceInfoRouter = require('./routes/deviceInfo')
@@ -16,10 +15,6 @@ app.use(bodyParser.json())
 app.use('/accountInfo', accountInfoRouter)
 app.use('/deviceInfo', deviceInfoRouter)
 app.use('/servers', serversRouter)
-
-app.get('/mac', (req, res) => {
-    res.json(getmac.default())
-})
 
   
 app.listen(port, () => {
