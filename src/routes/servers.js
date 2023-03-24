@@ -7,8 +7,14 @@ router.use(bodyParser.json())
 
 router.get('/', (req, res) => {
     fs.readFile('src/localDBs/servers.json', 'utf-8', function(err, jsonString){
-        if (err){
-            console.log(err)
+        if (err) {
+            console.log(err);
+            res.status(500).json(
+                {
+                    status: 'Error reading json',
+                    message: err
+                }
+            );
         }
         else {
             const data = JSON.parse(jsonString);
@@ -19,14 +25,33 @@ router.get('/', (req, res) => {
 })
 
 router.post('/', (req, res) => {
+    // TODO: Verify request body inputs and handle errors before writing to file.
     fs.writeFile("src/localDBs/servers.json", JSON.stringify(req.body), (err) => {
-        if (err)
+        if (err) {
             console.log(err);
+            res.status(500).json(
+                {
+                    status: 'Error reading json',
+                    message: err
+                }
+            );
+        }
         else {
-            fs.readFile('./localDBs/servers.json', 'utf-8', function(err, jsonString){
-                const data = JSON.parse(jsonString);
-                console.log(data)
-                res.json(data)
+            fs.readFile('src/localDBs/accountInfo.json', 'utf-8', function(err, jsonString){
+                if (err) {
+                    console.log(err);
+                    res.status(500).json(
+                        {
+                            status: 'Error reading json',
+                            message: err
+                        }
+                    );
+                }
+                else {
+                    const data = JSON.parse(jsonString);
+                    console.log(data);
+                    res.json(data);
+                }
             })
         }
     });

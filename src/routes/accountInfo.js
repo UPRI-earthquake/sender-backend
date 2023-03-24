@@ -9,8 +9,14 @@ router.use(bodyParser.json())
 /* GET account information endpoint */
 router.get('/', (req, res) => {
     fs.readFile('src/localDBs/accountInfo.json', 'utf-8', function(err, jsonString){
-        if (err){
-            console.log(err)
+        if (err) {
+            console.log(err);
+            res.status(500).json(
+                {
+                    status: 'Error reading json',
+                    message: err
+                }
+            );
         }
         else {
             const data = JSON.parse(jsonString);
@@ -25,6 +31,8 @@ router.post('/', (req, res) => {
     const macAddress = getmac.default(); //get device mac address
     const reqInfo = req.body; //get input
 
+    // TODO: Handle empty or undesired request body errors before saving to the file.
+
     const json = 
         {
             accountName: reqInfo.accountName,
@@ -33,12 +41,25 @@ router.post('/', (req, res) => {
         };
 
     fs.writeFile("src/localDBs/accountInfo.json", JSON.stringify(json), (err) => {
-        if (err)
+        if (err) {
             console.log(err);
+            res.status(500).json(
+                {
+                    status: 'Error reading json',
+                    message: err
+                }
+            );
+        }
         else {
             fs.readFile('src/localDBs/accountInfo.json', 'utf-8', function(err, jsonString){
-                if (err){
-                    console.log(err)
+                if (err) {
+                    console.log(err);
+                    res.status(500).json(
+                        {
+                            status: 'Error reading json',
+                            message: err
+                        }
+                    );
                 }
                 else {
                     const data = JSON.parse(jsonString);
