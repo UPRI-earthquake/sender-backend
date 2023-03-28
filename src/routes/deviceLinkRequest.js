@@ -43,6 +43,8 @@ router.post('/',
 
         // POST request to W1
         request.post(url, json, (error, response, body) => {
+            console.log('POST request sent to W1');
+
             // TODO: Process response from W1-handler before sending success or error message
             if (!error && response.statusCode == 200) { 
                 console.log('POST request body: ' + body);
