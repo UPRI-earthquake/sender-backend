@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs')
 const getmac = require('getmac')
-const request = require('request')
+const axios = require('axios')
 const { body, validationResult } = require('express-validator');
 require('dotenv').config()
 
@@ -32,7 +32,7 @@ router.post('/',
 
         const url = (process.env.NODE_ENV === 'production')
             ? 'https://' + process.env.CLIENT_PROD_HOST + '/deviceLinkHandler'
-            : 'http://' + process.env.CLIENT_DEV_HOST + ':' + process.env.CLIENT_DEV_PORT + '/deviceLinkHandler';
+            : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/deviceLinkHandler';
 
         const json =
         {
@@ -41,26 +41,23 @@ router.post('/',
             macAddress: macAddress
         };
 
-        // POST request to W1
-        request.post(url, json, (error, response, body) => {
-            console.log('POST request sent to W1');
+        console.log(url)
 
-            // TODO: Process response from W1-handler before sending success or error message
-            if (!error && response.statusCode == 200) { 
-                console.log('POST request body: ' + body);
-                res.status(200).json({
-                    error: 0,
+        axios.post(url, json)
+            .then(res => {
+                // console.log(res)
+                res.status(res.status).json({
                     status: 'success',
                     message: 'Succesfully Request Linking to W1'
                 })
-            } else {
-                res.status(500).json({
-                    error: 2,
+            })
+            .catch(err => {
+                // console.log(err.response)
+                res.status(err.response.status).json({
                     status: 'error',
-                    message: 'Cannot reach W1 Device Link Handler endpoint'
+                    message: err.response.data.message
                 })
-            }
-        })
+            })
     })
 
 
