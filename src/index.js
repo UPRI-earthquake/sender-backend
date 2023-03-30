@@ -8,7 +8,6 @@ const port = process.env.NODE_ENV === 'production'
              ? process.env.BACKEND_PROD_PORT
              : process.env.BACKEND_DEV_PORT;
 
-const accountInfoRouter = require('./routes/accountInfo')
 const deviceInfoRouter = require('./routes/deviceInfo')
 const serversRouter = require('./routes/servers')
 const deviceLinkRequestRouter = require('./routes/deviceLinkRequest')
@@ -22,7 +21,6 @@ app.use(cors())
 
 app.use(bodyParser.json())
 
-app.use('/accountInfo', accountInfoRouter)
 app.use('/deviceInfo', deviceInfoRouter)
 app.use('/servers', serversRouter)
 app.use('/deviceLinkRequest', deviceLinkRequestRouter)
