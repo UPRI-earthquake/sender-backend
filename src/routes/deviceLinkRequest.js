@@ -44,19 +44,25 @@ router.post('/',
         console.log(url)
 
         axios.post(url, json)
-            .then(res => {
-                // console.log(res)
-                res.status(res.status).json({
+            .then(response => {
+                console.log(response)
+                res.status(response.status).json({
                     status: 'success',
                     message: 'Succesfully Request Linking to W1'
                 })
             })
-            .catch(err => {
-                // console.log(err.response)
-                res.status(err.response.status).json({
-                    status: 'error',
-                    message: err.response.data.message
-                })
+            .catch(error => {
+                console.log(error)
+                if (error.response) {
+                    // The request was made and the server responded with a status code that falls out of the range of 2xx
+                    res.status(error.response.status).json({
+                        status: 'error',
+                        message: error.response.data.message
+                    })
+                } else {
+                    // Something happened in setting up the request that triggered an Error
+                    next(error) // Send error to express default error handler
+                }
             })
     })
 
