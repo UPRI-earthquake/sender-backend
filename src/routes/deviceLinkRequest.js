@@ -45,14 +45,14 @@ router.post('/',
 
         axios.post(url, json)
             .then(response => {
-                console.log(response)
+                // console.log(response)
                 res.status(response.status).json({
                     status: 'success',
                     message: 'Succesfully Request Linking to W1'
                 })
             })
             .catch(error => {
-                console.log(error)
+                // console.log(error)
                 if (error.response) {
                     // The request was made and the server responded with a status code that falls out of the range of 2xx
                     res.status(error.response.status).json({
