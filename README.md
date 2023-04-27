@@ -16,8 +16,8 @@ This is the backend repository for linking the rShake device to an account.
 1. Clone this repository.
 2. Create .env from .env.example.
 3. Run `npm install` or `yarn install` to install dependencies.
-4. Run `npm run dev` to enable at *port 5001*, the following end-points:
-* */mac*            - endpoint for getting device mac address. This will be available on *port 5001*.
-* */accountsInfo*   - 
-* */deviceInfo*     - 
-* */servers*        - 
+4. Run `npm run dev` to enable the following end-points at *port 5001*:
+* */deviceInfo*         
+* */deviceLinkRequest*  
+* */servers*            
+5. Run `npm test` to perform unit tests.
