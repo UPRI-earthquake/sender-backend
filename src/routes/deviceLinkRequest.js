@@ -73,7 +73,10 @@ router.post('/',
                             })
                         } else {
                             // Something happened in setting up the request that triggered an Error
-                            next(error) // Send error to express default error handler
+                            res.status(500).json({
+                                status: 500,
+                                message: "Internal Server Error"//error.response.data.message
+                            })
                         }
                     })
             }
