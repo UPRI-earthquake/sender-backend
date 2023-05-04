@@ -8,6 +8,53 @@ require('dotenv').config()
 
 router.use(express.json())
 
+// TODO: create a function for getting the device streamId
+function generate_streamId() {
+    const streamId = "AM_R3B2D_00_ENZ, AM_R3B2D_00_ENN" // mock values
+    return streamId
+
+    // TODO: Get streamID from rshake
+    // TODO: Parse streamId and save details to deviceInfo.json
+}
+
+// TODO: Request token from auth server + save token to localDB 
+// note: Always check if there's an existing token in localDB, if none, request from auth server
+function request_auth_token(username, password) {
+    // TODO: check if token.json is not null. If null, request a token. Else, verify token from auth server.
+    fs.readFile('src/localDBs/token.json', 'utf-8', function (err, tokenString) {
+        const data = JSON.parse(tokenString);
+        console.log("accessToken read from json file: " + data.accessToken)
+        
+        let endpoint = null
+        if (data.accessToken != null) { // token exists, needs verification
+            endpoint = "/verifySensorToken";
+        } else { // token is null, request 
+            endpoint = "/authenticate";
+        }
+
+        const auth_url = (process.env.NODE_ENV === 'production')
+            ? 'https://' + process.env.CLIENT_PROD_HOST + '/accounts' + endpoint
+            : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/accounts' + endpoint
+        console.log(auth_url)
+        const credentials = 
+        {
+            username: username,
+            password: password,
+            role: data.role,
+            token: data.accessToken
+        }
+
+        // Send the username and password inputs to auth server
+        axios.post(auth_url, credentials)
+            .then(response => {
+                console.log("request_auth_token response: " +response)
+                return response
+            })
+            .catch(error => {
+                console.log("request_auth_token error:" +error)
+            })
+    })
+}
 
 /* POST deviceLinkRequest endpoint */
 router.post('/',
@@ -26,62 +73,55 @@ router.post('/',
             next()
         }
     }, (req, res, next) => {
-        // Read the device info saved on json file
-        fs.readFile('src/localDBs/deviceInfo.json', 'utf-8', function (err, jsonString) {
-            const data = JSON.parse(jsonString);
-            console.log('Device info read from json file: ' + data.deviceInfo)
-            const deviceInfo = data.deviceInfo
+        const streamId = generate_streamId(); //get device streamId
+        console.log("streamId Acquired: " + streamId) //logs the streamId acquired
+        const macAddress = getmac.default(); //get device mac address
+        console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired
 
-            // TO-DO: validate device info from json file. Network, location, station should not be null to proceed.
-            if (deviceInfo.network == null || deviceInfo.location == null || deviceInfo.station == null) {
-                res.status(400).json({ status: 400, message: "Device Information not yet set. Update device information first before linking." })
-            } else{
-                const macAddress = getmac.default(); //get device mac address
-                console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired
+        const token = request_auth_token(req.body.username, req.body.password);
+        const accessToken = token.accessToken
+        const jsonToken = { accessToken: accessToken }
+        // Save token to a json file in localDB
+        fs.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken), (err, next) => {
+            // if (err){
+            //     next(err)
+            // }
+        });
 
-                const url = (process.env.NODE_ENV === 'production')
-                    ? 'https://' + process.env.CLIENT_PROD_HOST + '/device/link'
-                    : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/device/link';
+        const json =
+        {
+            token: accessToken,
+            macAddress: macAddress,
+            streamId: streamId
+        };
+        const url = (process.env.NODE_ENV === 'production')
+            ? 'https://' + process.env.CLIENT_PROD_HOST + '/device/link'
+            : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/device/link';
 
-                const json =
-                {
-                    username: req.body.username,
-                    password: req.body.password,
-                    network: deviceInfo.network,
-                    station: deviceInfo.station,
-                    location: deviceInfo.location,
-                    macAddress: macAddress
-                };
-
-                console.log(url)
-
-                axios.post(url, json)
-                    .then(response => {
-                        console.log(response)
-                        res.status(response.status).json({
-                            status: response.status,
-                            message: 'Succesfully Request Linking to W1'
-                        })
+        axios.post(url, json)
+            .then(response => {
+                // console.log(response)
+                res.status(response.status).json({
+                    status: response.status,
+                    message: 'Succesfully Request Linking to W1'
+                })
+            })
+            .catch(error => {
+                // console.log(error)
+                if (error.response) {
+                    // The request was made and the server responded with a status code that falls out of the range of 2xx
+                    res.status(error.response.status).json({
+                        status: error.response.status,
+                        message: error.response.data.message
                     })
-                    .catch(error => {
-                        console.log(error)
-                        if (error.response) {
-                            // The request was made and the server responded with a status code that falls out of the range of 2xx
-                            res.status(error.response.status).json({
-                                status: error.response.status,
-                                message: error.response.data.message
-                            })
-                        } else {
-                            // Something happened in setting up the request that triggered an Error
-                            res.status(500).json({
-                                status: 500,
-                                message: "Internal Server Error"//error.response.data.message
-                            })
-                        }
+                } else {
+                    // Something happened in setting up the request that triggered an Error
+                    res.status(500).json({
+                        status: 500,
+                        message: "Internal Server Error"//error.response.data.message
                     })
-            }
-        })
-        
+                }
+            })
     })
 
 
