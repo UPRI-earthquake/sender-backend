@@ -9,7 +9,7 @@ router.get('/', (req, res) => {
     fs.readFile('src/localDBs/deviceInfo.json', 'utf-8', function (err, jsonString) {
         const data = JSON.parse(jsonString);
         console.log(data.deviceInfo)
-        res.json(data.deviceInfo)
+        res.status(200).json(data.deviceInfo)
     })
 })
 
@@ -19,7 +19,7 @@ router.post('/', (req, res) => {
         fs.readFile('src/localDBs/accountInfo.json', 'utf-8', function (err, jsonString) {
             const data = JSON.parse(jsonString);
             console.log(data);
-            res.json(data);
+            res.status(200).json(data);
         })
     });
 })
