@@ -4,6 +4,7 @@
         "station": "R3B2D",
         "location": "Quezon City",
         "channel": null,
-        "elevation": null
+        "elevation": null,
+        "streamId": null
     }
 }
