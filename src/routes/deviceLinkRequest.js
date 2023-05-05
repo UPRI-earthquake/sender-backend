@@ -17,44 +17,37 @@ function generate_streamId() {
     // TODO: Parse streamId and save details to deviceInfo.json
 }
 
-// TODO: Request token from auth server + save token to localDB 
+// Request token from auth server + save token to localDB 
 // note: Always check if there's an existing token in localDB, if none, request from auth server
-function request_auth_token(username, password) {
-    // TODO: check if token.json is not null. If null, request a token. Else, verify token from auth server.
-    fs.readFile('src/localDBs/token.json', 'utf-8', function (err, tokenString) {
+async function request_auth_token(username, password) {
+    let retVal = null;
+    try {
+        const tokenString = await fs.promises.readFile('src/localDBs/token.json', 'utf-8');
         const data = JSON.parse(tokenString);
-        console.log("accessToken read from json file: " + data.accessToken)
-        
-        let endpoint = null
-        if (data.accessToken != null) { // token exists, needs verification
-            endpoint = "/verifySensorToken";
-        } else { // token is null, request 
-            endpoint = "/authenticate";
+        console.log("accessToken read from json file: " + data.accessToken);
+        if (data.accessToken != null) {
+            retVal = data.accessToken;
+        } else {
+            let auth_url = (process.env.NODE_ENV === 'production') ? 'https://' + process.env.CLIENT_PROD_HOST + '/accounts/authenticate' : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
+            const credentials = {
+                username: username,
+                password: password,
+                role: data.role
+            };
+            const response = await axios.post(auth_url, credentials);
+            console.log("request_auth_token response: " + response);
+            const jsonToken = {
+                accessToken: response.accessToken,
+                role: data.role
+            };
+            await fs.promises.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken));
+            retVal = response;
         }
-
-        const auth_url = (process.env.NODE_ENV === 'production')
-            ? 'https://' + process.env.CLIENT_PROD_HOST + '/accounts' + endpoint
-            : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/accounts' + endpoint
-        console.log(auth_url)
-        const credentials = 
-        {
-            username: username,
-            password: password,
-            role: data.role,
-            token: data.accessToken
-        }
-
-        // Send the username and password inputs to auth server
-        axios.post(auth_url, credentials)
-            .then(response => {
-                console.log("request_auth_token response: " +response)
-                return response
-            })
-            .catch(error => {
-                console.log("request_auth_token error:" +error)
-                return error
-            })
-    })
+    } catch (error) {
+        console.log("request_auth_token error:" + error);
+        retVal = error;
+    }
+    return retVal;
 }
 
 /* POST deviceLinkRequest endpoint */
@@ -69,33 +62,26 @@ router.post('/',
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
             res.status(400).json({ validationErrors: errors.array() }); //returns the error message in an array format
-        } else{
+        } else {
             console.log('POST request received on /deviceLinkRequest endpoint')
             next()
         }
-    }, (req, res, next) => {
+    }, async (req, res, next) => {
         const streamId = generate_streamId(); //get device streamId
         console.log("streamId Acquired: " + streamId) //logs the streamId acquired
         const macAddress = getmac.default(); //get device mac address
         console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired
 
-        const token = request_auth_token(req.body.username, req.body.password);
+        const token = await request_auth_token(req.body.username, req.body.password);
+        console.log("Returned value: " + token)
         if (!token) {
-            res.status(400).json({ status: 400, message: 'Token Request/Validate Unsuccessful'})
+            res.status(400).json({ status: 400, message: 'Token Request/Validate Unsuccessful' })
             return
         }
-        const accessToken = token.accessToken
-        const jsonToken = { accessToken: accessToken }
-        // Save token to a json file in localDB
-        fs.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken), (err, next) => {
-            // if (err){
-            //     next(err)
-            // }
-        });
 
         const json =
         {
-            token: accessToken,
+            token: token.accessToken,
             macAddress: macAddress,
             streamId: streamId
         };
