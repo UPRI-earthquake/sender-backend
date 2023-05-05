@@ -52,6 +52,7 @@ function request_auth_token(username, password) {
             })
             .catch(error => {
                 console.log("request_auth_token error:" +error)
+                return error
             })
     })
 }
@@ -79,6 +80,10 @@ router.post('/',
         console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired
 
         const token = request_auth_token(req.body.username, req.body.password);
+        if (!token) {
+            res.status(400).json({ status: 400, message: 'Connection Error'})
+            return
+        }
         const accessToken = token.accessToken
         const jsonToken = { accessToken: accessToken }
         // Save token to a json file in localDB
