@@ -28,7 +28,10 @@ async function request_auth_token(username, password) {
         if (data.accessToken != null) {
             retVal = data.accessToken;
         } else {
-            let auth_url = (process.env.NODE_ENV === 'production') ? 'https://' + process.env.CLIENT_PROD_HOST + '/accounts/authenticate' : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
+            let auth_url = (process.env.NODE_ENV === 'production') 
+                ? 'https://' + process.env.W1_PROD_HOST + '/accounts/authenticate' 
+                : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
+            console.log(auth_url)
             const credentials = {
                 username: username,
                 password: password,
@@ -86,7 +89,7 @@ router.post('/',
             streamId: streamId
         };
         const url = (process.env.NODE_ENV === 'production')
-            ? 'https://' + process.env.CLIENT_PROD_HOST + '/device/link'
+            ? 'https://' + process.env.W1_PROD_HOST + '/device/link'
             : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/device/link';
 
         axios.post(url, json)
