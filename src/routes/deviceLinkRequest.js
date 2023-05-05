@@ -81,7 +81,7 @@ router.post('/',
 
         const token = request_auth_token(req.body.username, req.body.password);
         if (!token) {
-            res.status(400).json({ status: 400, message: 'Connection Error'})
+            res.status(400).json({ status: 400, message: 'Token Request/Validate Unsuccessful'})
             return
         }
         const accessToken = token.accessToken
