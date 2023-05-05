@@ -5,6 +5,8 @@ const getmac = require('getmac')
 const axios = require('axios')
 const { body, validationResult } = require('express-validator');
 require('dotenv').config()
+const https = require('https')
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 router.use(express.json())
 
@@ -37,8 +39,8 @@ async function request_auth_token(username, password) {
                 password: password,
                 role: data.role
             };
-            const response = await axios.post(auth_url, credentials);
-            console.log("request_auth_token response: " + response);
+            const response = await axios.post(auth_url, credentials, { httpsAgent });
+            console.dir("request_auth_token response: " + response, {depth: null});
             const jsonToken = {
                 accessToken: response.accessToken,
                 role: data.role
