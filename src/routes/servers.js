@@ -26,6 +26,13 @@ const serverInputSchema = Joi.object().keys({
 
 router.route('/add').post(async (req, res) => {
     try {
+        const result = serverInputSchema.validate(req.body);
+        if(result.error){
+            console.log(result.error.details[0].message)
+            res.status(400).json({ status: 400, message: result.error.details[0].message});
+            return;
+        }
+        
         // Read data from servers.json file
         const jsonString = await fs.promises.readFile('src/localDBs/servers.json', 'utf-8');
         const existingServers = JSON.parse(jsonString);
