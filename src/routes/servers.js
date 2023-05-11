@@ -41,7 +41,7 @@ router.route('/add').post(async (req, res) => {
         const newServer = {
           hostName: req.body.hostName,
           url: req.body.url,
-          isConnected: false
+          isAllowedToStream: false
         };
     
         // Check if newServer already exists in existingServers
