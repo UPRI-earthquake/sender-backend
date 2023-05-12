@@ -113,7 +113,7 @@ router.post('/',
                 streamId: streamId
             };
             const url = (process.env.NODE_ENV === 'production')
-                ? 'https://' + process.env.CLIENT_PROD_IP + '/device/link'
+                ? 'https://' + process.env.W1_PROD_IP + '/device/link'
                 : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/device/link';
 
             const response = (process.env.NODE_ENV === 'production')
