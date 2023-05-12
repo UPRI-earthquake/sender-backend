@@ -12,8 +12,7 @@ router.use(express.json())
 
 // TODO: create a function for getting the device streamId
 async function generate_streamId() {
-    // TODO: Get streamID from rshake
-    // TODO: Parse streamId and save details to deviceInfo.json
+    // TODO: Get streamID from rshake // TODO: Parse streamId and save details to deviceInfo.json
     let retVal = ""
     const streamId = "AM_R3B2D_00_ENZ,AM_R3B2D_00_ENN" // mock values
 
@@ -58,17 +57,18 @@ async function request_auth_token(username, password) {
                 password: password,
                 role: data.role
             };
+		
             const response = (process.env.NODE_ENV === 'production')
                 ? await client.post(auth_url, credentials)
                 : await axios.post(auth_url, credentials)
             console.log("request_auth_token response: " + response.data.accessToken);
             console.dir(response)
             const jsonToken = {
-                accessToken: response.accessToken,
+                accessToken: response.data.accessToken,
                 role: data.role
             };
             await fs.promises.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken));
-            retVal = response;
+            retVal = response.data;
         }
     } catch (error) {
         console.log("request_auth_token error:" + error);
@@ -100,42 +100,34 @@ router.post('/',
             const macAddress = getmac.default(); //get device mac address
             console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired
 
-        const token = await request_auth_token(req.body.username, req.body.password);
-        console.log("Returned value: " + token)
-        if (!token) {
-            res.status(400).json({ status: 400, message: 'Token Request/Validate Unsuccessful' })
-            return
-        }
+            const token = await request_auth_token(req.body.username, req.body.password);
+            console.log("Returned value: " + token)
+            if (!token) {
+                res.status(400).json({ status: 400, message: 'Token Request/Validate Unsuccessful' })
+                return
+            }
 
-        const json =
-        {
-            token: token.accessToken,
-            macAddress: macAddress,
-            streamId: streamId
-        };
-        const url = (process.env.NODE_ENV === 'production')
-            ? 'https://' + process.env.W1_PROD_HOST + '/device/link'
-            : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/device/link';
+            const json =
+            {
+                macAddress: macAddress,
+                streamId: streamId
+            };
+            const url = (process.env.NODE_ENV === 'production')
+                ? 'https://' + process.env.CLIENT_PROD_HOST + '/device/link'
+                : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/device/link';
 
-            const response = (process.env.NODE_ENV === 'production')
-                ? await client.post(url, json, {
-                    headers: {
-                        Authorization: `Bearer ${token}`
-                    },
-                    rejectUnauthorized: false // disable SSL verification
-                })
-                : await axios.post(url, json, {
-                    headers: {
-                        Authorization: `Bearer ${token}`
-                    }
-                });
+            const response = await axios.post(url, json, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
 
             res.status(response.status).json({
                 status: response.status,
                 message: 'Successfully Requested Linking to W1'
             });
         } catch (error) {
-            // console.log(error);
+            console.log(error);
 
             if (error.response) {
                 // The request was made and the server responded with a status code that falls out of the range of 2xx
@@ -151,7 +143,6 @@ router.post('/',
                 });
             }
         }
-
     })
 
 
