@@ -68,7 +68,7 @@ async function request_auth_token(username, password) {
                 role: data.role
             };
             await fs.promises.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken));
-            retVal = response.data;
+            retVal = response.data.accessToken;
         }
     } catch (error) {
         console.log("request_auth_token error:" + error);
