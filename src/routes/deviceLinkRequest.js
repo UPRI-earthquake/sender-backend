@@ -49,8 +49,8 @@ async function request_auth_token(username, password) {
             retVal = data.accessToken;
         } else {
             let auth_url = (process.env.NODE_ENV === 'production') 
-                ? 'https://' + process.env.W1_PROD_HOST + '/accounts/authenticate' 
-                : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
+                ? 'https://' + process.env.W1_PROD_IP + '/accounts/authenticate' 
+                : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
             console.log(auth_url)
             const credentials = {
                 username: username,
@@ -59,7 +59,7 @@ async function request_auth_token(username, password) {
             };
 		
             const response = (process.env.NODE_ENV === 'production')
-                ? await client.post(auth_url, credentials)
+                ? await axios.post(auth_url, credentials, { httpsAgent })
                 : await axios.post(auth_url, credentials)
             console.log("request_auth_token response: " + response.data.accessToken);
             console.dir(response)
@@ -113,14 +113,21 @@ router.post('/',
                 streamId: streamId
             };
             const url = (process.env.NODE_ENV === 'production')
-                ? 'https://' + process.env.CLIENT_PROD_HOST + '/device/link'
-                : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/device/link';
+                ? 'https://' + process.env.CLIENT_PROD_IP + '/device/link'
+                : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/device/link';
 
-            const response = await axios.post(url, json, {
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
-            });
+            const response = (process.env.NODE_ENV === 'production')
+             ? await axios.post(url, json, {
+                    httpsAgent,
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                })
+            : await axios.post(url,json, {
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                })
 
             res.status(response.status).json({
                 status: response.status,
