@@ -41,10 +41,20 @@ async function generate_streamId() {
 // note: Always check if there's an existing token in localDB, if none, request from auth server
 async function request_auth_token(username, password) {
     let retVal = null;
+
     try {
-        const tokenString = await fs.promises.readFile('src/localDBs/token.json', 'utf-8');
-        const data = JSON.parse(tokenString);
-        console.log("accessToken read from json file: " + data.accessToken);
+        const filePath = 'src/localDBs/token.json';
+        let data = { accessToken: null, role: "sensor" };
+
+        try {
+            const tokenString = await fs.promises.readFile(filePath, 'utf-8');
+            data = JSON.parse(tokenString);
+            console.log("accessToken read from json file: " + data.accessToken);
+        } catch (error) {
+            // File does not exist, create it
+            await fs.promises.writeFile(filePath, JSON.stringify(data), 'utf-8');
+        }
+
         if (data.accessToken != null) {
             retVal = data.accessToken;
         } else {

@@ -7,16 +7,30 @@ const { Result } = require('express-validator');
 
 router.use(bodyParser.json())
 
-router.route('/getList').get(
-    (req, res) => {
-        // Read the local file store
-        fs.readFile('src/localDBs/servers.json', 'utf-8', function (err, jsonString) {
-            const data = JSON.parse(jsonString);
-            console.log(data)
-            res.json(data)
-        })
+router.route('/getList').get(async (req, res) => {
+  const filePath = 'src/localDBs/servers.json';
+
+  try {
+    // Check if the file exists
+    await fs.promises.access(filePath, fs.constants.F_OK);
+
+    // Read the file
+    const jsonString = await fs.promises.readFile(filePath, 'utf-8');
+    const data = JSON.parse(jsonString);
+    console.log(data);
+    res.json(data);
+  } catch (err) {
+    // File does not exist, create it
+    try {
+      await fs.promises.writeFile(filePath, '[]', 'utf-8');
+      console.log('File created:', filePath);
+      res.json([]);
+    } catch (err) {
+      console.error('Error creating file:', filePath);
+      res.status(500).json({ error: 'Internal Server Error' });
     }
-)
+  }
+});
 
 
 const serverInputSchema = Joi.object().keys({
