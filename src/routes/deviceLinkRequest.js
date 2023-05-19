@@ -5,16 +5,36 @@ const getmac = require('getmac')
 const axios = require('axios')
 const { body, validationResult } = require('express-validator');
 require('dotenv').config()
+const https = require('https')
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 router.use(express.json())
 
 // TODO: create a function for getting the device streamId
-function generate_streamId() {
+async function generate_streamId() {
+    // TODO: Get streamID from rshake // TODO: Parse streamId and save details to deviceInfo.json
+    let retVal = ""
     const streamId = "AM_R3B2D_00_ENZ,AM_R3B2D_00_ENN" // mock values
-    return streamId
 
-    // TODO: Get streamID from rshake
-    // TODO: Parse streamId and save details to deviceInfo.json
+    try {
+        const deviceInfo = {
+            deviceInfo: {
+                network: streamId,
+                station: streamId,
+                location: streamId,
+                elevation: streamId,
+                channel: streamId,
+                streamId: streamId
+            }
+        };
+        await fs.promises.writeFile("src/localDBs/deviceInfo.json", JSON.stringify(deviceInfo));
+
+        retVal = streamId
+    } catch (error) {
+        retVal = { status: 400, message: "StreamID not acquired" }
+    }
+
+    return retVal
 }
 
 // Request token from auth server + save token to localDB 
@@ -28,17 +48,19 @@ async function request_auth_token(username, password) {
         if (data.accessToken != null) {
             retVal = data.accessToken;
         } else {
-            console.log("ENV: " + process.env.NODE_ENV)
-            let auth_url = (process.env.NODE_ENV === 'production')
-                ? 'https://' + process.env.CLIENT_PROD_HOST + '/accounts/authenticate'
-                : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
-            console.log('auth_url: ' + auth_url)
+            let auth_url = (process.env.NODE_ENV === 'production') 
+                ? 'https://' + process.env.W1_PROD_IP + '/accounts/authenticate' 
+                : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
+            console.log(auth_url)
             const credentials = {
                 username: username,
                 password: password,
                 role: data.role
             };
-            const response = await axios.post(auth_url, credentials);
+		
+            const response = (process.env.NODE_ENV === 'production')
+                ? await axios.post(auth_url, credentials, { httpsAgent })
+                : await axios.post(auth_url, credentials)
             console.log("request_auth_token response: " + response.data.accessToken);
             console.dir(response)
             const jsonToken = {
@@ -46,7 +68,7 @@ async function request_auth_token(username, password) {
                 role: data.role
             };
             await fs.promises.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken));
-            retVal = response.data;
+            retVal = response.data.accessToken;
         }
     } catch (error) {
         console.log("request_auth_token error:" + error);
@@ -73,7 +95,7 @@ router.post('/',
         }
     }, async (req, res, next) => {
         try {
-            const streamId = generate_streamId(); //get device streamId
+            const streamId = await generate_streamId(); //get device streamId
             console.log("streamId Acquired: " + streamId) //logs the streamId acquired
             const macAddress = getmac.default(); //get device mac address
             console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired
@@ -91,14 +113,21 @@ router.post('/',
                 streamId: streamId
             };
             const url = (process.env.NODE_ENV === 'production')
-                ? 'https://' + process.env.CLIENT_PROD_HOST + '/device/link'
-                : 'http://' + process.env.W1_DEV_HOST + ':' + process.env.W1_DEV_PORT + '/device/link';
+                ? 'https://' + process.env.W1_PROD_IP + '/device/link'
+                : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/device/link';
 
-            const response = await axios.post(url, json, {
-                headers: {
-                    Authorization: `Bearer ${token}`
-                }
-            });
+            const response = (process.env.NODE_ENV === 'production')
+             ? await axios.post(url, json, {
+                    httpsAgent,
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                })
+            : await axios.post(url,json, {
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    }
+                })
 
             res.status(response.status).json({
                 status: response.status,
@@ -121,7 +150,6 @@ router.post('/',
                 });
             }
         }
-
     })
 
 
