@@ -10,25 +10,13 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 router.use(express.json())
 
-// TODO: create a function for getting the device streamId
+// A function for getting the device streamId from rshake
 async function generate_streamId() {
-    // TODO: Get streamID from rshake // TODO: Parse streamId and save details to deviceInfo.json
     let retVal = ""
     const streamId = "AM_R3B2D_00_ENZ,AM_R3B2D_00_ENN" // mock values
 
     try {
-        const deviceInfo = {
-            deviceInfo: {
-                network: streamId,
-                station: streamId,
-                location: streamId,
-                elevation: streamId,
-                channel: streamId,
-                streamId: streamId
-            }
-        };
-        await fs.promises.writeFile("src/localDBs/deviceInfo.json", JSON.stringify(deviceInfo));
-
+        // TODO: Get streamID from rshake. No parsing required here.
         retVal = streamId
     } catch (error) {
         retVal = { status: 400, message: "StreamID not acquired" }
@@ -138,6 +126,9 @@ router.post('/',
                         Authorization: `Bearer ${token}`
                     }
                 })
+
+            // Save deviceInfo coming from the response from request to W1
+            await fs.promises.writeFile("src/localDBs/deviceInfo.json", JSON.stringify(response.data.payload));
 
             res.status(response.status).json({
                 status: response.status,
