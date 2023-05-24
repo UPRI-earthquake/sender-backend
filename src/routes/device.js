@@ -1,46 +1,128 @@
 const express = require('express');
 const router = express.Router();
 const { spawn } = require('child_process');
+const fs = require('fs')
+const bodyParser = require('body-parser')
 
-// POST endpoint (/stream) to execute a slink2dali childprocess from nodejs
-router.route('/stream').post( async (req, res) => {
+router.use(bodyParser.json())
+
+let childProcesses = []; // Global Array to store child processes
+
+// A function that changes the isAllowedToStream parameter from servers.json file
+async function setIsAllowedToStream(url, toggleValue) {
+    let retVal = '';
+    try {
+        // Read data from servers.json file
+        const jsonString = await fs.promises.readFile('src/localDBs/servers.json', 'utf-8');
+        const existingServers = JSON.parse(jsonString);
+
+        // Find the server with the matching URL from servers.json file
+        const server = existingServers.find((item) => item.url === url);
+
+        if (server) {
+            // Update the isAllowedToStream parameter depending on the toggleValue from frontend
+            if (toggleValue === true) {
+                server.isAllowedToStream = true;
+            } else { server.isAllowedToStream = false; }
+
+            // Save the updated servers array back to the json file
+            await fs.promises.writeFile('src/localDBs/servers.json', JSON.stringify(existingServers));
+            // next();
+            retVal = 0;
+        } else {
+            // Send a response indicating the URL was not found in the file
+            // res.status(404).json({ message: 'Server URL not found' });
+            retVal = 'Error: Server URL not found on the local file store';
+            // return;
+        }
+    } catch (error) {
+        console.error(`Error updating server URL: ${error}`);
+        // res.status(500).json({ message: 'Internal Server Error' });
+        retVal = 'Error: Internal Server Error'
+        // return;
+    }
+
+    return retVal;
+}
+
+// POST endpoint (/stream/start) to execute a slink2dali childprocess from nodejs
+router.route('/stream/start').post(async (req, res) => {
     console.log('POST Request sent on /device/stream endpoint')
 
     try {
+        // TODO: Check first if there is a slink2dali sending request to the target ringserver
+
+        // TODO: Add necessary options to be sent as arguments of the slink2dali (i.e. token, target ringserver etc.)
         const command = `${process.env.SLINK2DALIPATH}/slink2dali`;
-        const options = `-vvv -S GE_TOLI2 geofon.gfz-potsdam.de:18000 localhost:18000`.split(' ');
+        const net_sta = 'GE_TOLI2'; // CHANGE THIS
+        const sender_slink2dali = 'geofon.gfz-potsdam.de:18000'; // CHANGE THIS
+        const receiver_ringserver = req.body.url; // CHANGE THIS
+        const options = ['-vvv', '-S', net_sta , sender_slink2dali, receiver_ringserver];
 
         // Execute the command using spawn
         const childProcess = spawn(command, options);
+
+        let hasError = false; // Flag to track if error occurred
         
         // Listen for 'error' event from the child process
         childProcess.on('error', (error) => {
             console.error(`Error executing command: ${error}`);
             // Handle the error and send an appropriate response
+            hasError = true;
         });
 
         // Listen for 'close' event from the child process
         childProcess.on('close', (code, signal) => {
             console.log(`Child process closed with code ${code} and signal ${signal}`);
-            // Handle the command output or completion here
-            // Send a success response
-            // res.status(200).json({ message: 'Command executed successfully' });
         });
 
         // Listen for 'exit' event from the child process
-        childProcess.on('exit', (code, signal) => {
+        childProcess.on('exit', async(code, signal) => {
             console.log(`Child process exited with code ${code} and signal ${signal}`);
+
+            if (hasError) {
+                // Cleanup functions
+                // Terminate the child process if an error occurred during execution
+                childProcess.kill();
+                
+                // Removes the childProcess from the childProcesses array
+                const index = childProcesses.findIndex((item) => item.childProcess === childProcess.pid);
+                if (index !== -1) {
+                    childProcesses.splice(index, 1);
+                    console.log(`Child process ${childProcess.pid} removed from the array`);
+                }
+
+                // Revert back the isAllowedToStream parameter
+                setIsAllowedToStream(req.body.url, 'false')
+            }
         });
 
         // Listen for 'stdout' event from the child process
         childProcess.stdout.on('data', (data) => {
-            console.log(`Command output: ${data}`);
+            console.log(`Command output: ${data}`); // Log slink2dali output 
+            
+            // Listen for 'error' logs in slink2dali
+            if (data.includes('error')) {
+                console.error('Error encountered in slink2dali logs');
+                // Set the error flag to true
+                hasError = true;
+            }
         });
 
         // Listen for 'stderr' event from the child process
         childProcess.stderr.on('data', (data) => {
             console.error(`Command error: ${data}`);
         });
+
+        // Add the child process to the array if no error occurred
+        childProcesses.push({ childProcess: childProcess.pid, url: receiver_ringserver });
+        console.log(childProcesses);
+
+        const response = await setIsAllowedToStream(req.body.url, req.body.toggleValue); // Call the function that toggles the parameter isAllowedToStream
+        if (response != 0) {
+            console.log(response)
+            childProcess.kill();
+        }
 
         res.status(200).json({ message: 'Command executed successfully' });
     } catch (error) {
