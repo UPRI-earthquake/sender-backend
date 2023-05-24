@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const fs = require('fs')
 const bodyParser = require('body-parser')
 
@@ -131,5 +131,48 @@ router.route('/stream/start').post(async (req, res) => {
         res.status(500).json({ error: 'Internal Server Error' });
     }
 })
+
+
+// Function to remove a child process from the childProcesses array
+function removeChildProcess(pid) {
+    childProcesses = childProcesses.filter((item) => item.childProcess !== pid);
+}
+
+router.post('/stream/stop', async (req, res) => {
+    console.log('POST Request sent on /stream/stop endpoint');
+    console.log(childProcesses)
+
+    try {
+        const { url, toggleValue } = req.body;
+
+        // Update the isAllowedToStream parameter in json file
+        setIsAllowedToStream(url, toggleValue);
+
+        // Find the child process with the specified URL
+        const childProcessObj = childProcesses.find((item) => item.url === url);
+
+        if (childProcessObj) {
+            const pid = childProcessObj.childProcess;
+
+            // Kill the child process using the process ID
+            exec(`kill ${pid}`, (error, stdout, stderr) => {
+                if (error) {
+                    console.error(`Error stopping child process: ${error}`);
+                    res.status(500).json({ message: 'Internal Server Error' });
+                } else {
+                    // Remove the child process from the array
+                    removeChildProcess(pid);
+                    res.status(200).json({ message: 'Child process stopped successfully' });
+                }
+            });
+        } else {
+            res.status(404).json({ message: 'Child process not found' });
+        }
+    } catch (error) {
+        console.error(`Error stopping child process: ${error}`);
+        // Handle the error and send an appropriate response
+        res.status(500).json({ message: 'Internal Server Error' });
+    }
+});
 
 module.exports = router;
