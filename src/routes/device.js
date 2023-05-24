@@ -1,10 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const bodyParser = require('body-parser');
-const path = require('path');
 const { spawn } = require('child_process');
-
-router.use(bodyParser.json())
 
 // POST endpoint (/stream) to execute a slink2dali childprocess from nodejs
 router.route('/stream').post( async (req, res) => {
