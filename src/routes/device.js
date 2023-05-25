@@ -124,7 +124,17 @@ router.route('/stream/start').post(async (req, res) => {
             childProcess.kill();
         }
 
-        res.status(200).json({ message: 'Command executed successfully' });
+        // Add 2-second delay to listen for slink2dali error before sending json response
+        if (!hasError) {
+            setTimeout(() => {
+                res.status(200).json({ message: 'Command executed successfully' });
+            }, 2000);
+        } else {
+            setTimeout(() => {
+                res.status(500).json({ message: 'Error encountered on slink2dali' });
+            }, 2000);
+        }
+        
     } catch (error) {
         console.error(`Error executing command: ${error}`);
         // Handle the error and send an appropriate response
