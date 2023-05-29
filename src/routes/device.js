@@ -129,11 +129,6 @@ router.route('/stream/start').post(async (req, res) => {
 })
 
 
-// Function to remove a child process from the childProcesses array
-function removeChildProcess(pid) {
-    childProcesses = childProcesses.filter((item) => item.childProcess !== pid);
-}
-
 router.post('/stream/stop', async (req, res) => {
     console.log('POST Request sent on /stream/stop endpoint');
     console.log(childProcesses)
@@ -150,14 +145,14 @@ router.post('/stream/stop', async (req, res) => {
         if (childProcessObj) {
             const pid = childProcessObj.childProcess;
 
-            // Kill the child process using the process ID
+            // Kill the child process using the saved process ID
             exec(`kill ${pid}`, (error, stdout, stderr) => {
                 if (error) {
                     console.error(`Error stopping child process: ${error}`);
                     res.status(500).json({ message: 'Internal Server Error' });
                 } else {
                     // Remove the child process from the array
-                    removeChildProcess(pid);
+                    childProcesses = childProcesses.filter((item) => item.childProcess !== pid);
                     res.status(200).json({ message: 'Child process stopped successfully' });
                 }
             });
