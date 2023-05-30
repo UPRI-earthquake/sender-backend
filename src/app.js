@@ -56,7 +56,7 @@ async function createLocalFileStoreDir() {
             await fs.promises.access(`${localFileStoreDir}/servers.json`, fs.constants.R_OK);
             console.log(`servers.json already exists.`);
           } catch (error) {
-            const serversJson = {};
+            const serversJson = [];
             await fs.promises.writeFile(`${localFileStoreDir}/servers.json`, JSON.stringify(serversJson));
             console.log(`servers.json created.`);
           }
