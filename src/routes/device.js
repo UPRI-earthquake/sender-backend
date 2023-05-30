@@ -41,9 +41,9 @@ router.route('/stream/start').post(async (req, res) => {
 
         // TODO: Add necessary options to be sent as arguments of the slink2dali (i.e. token, target ringserver etc.)
         const command = `${process.env.SLINK2DALIPATH}/slink2dali`;
-        const net_sta = 'GE_TOLI2'; // CHANGE THIS
+        const net_sta = 'GE_TOLI2'; // CHANGE THIS. This info should come from deviceInfo.json
         const sender_slink2dali = 'geofon.gfz-potsdam.de:18000'; // CHANGE THIS
-        const receiver_ringserver = req.body.url; // CHANGE THIS
+        const receiver_ringserver = req.body.url;
         const options = ['-vvv', '-S', net_sta , sender_slink2dali, receiver_ringserver];
 
         // Execute the command using spawn
@@ -72,11 +72,12 @@ router.route('/stream/start').post(async (req, res) => {
                 // Terminate the child process if an error occurred during execution
                 childProcess.kill();
 
-                // Removes the childProcess from the childProcesses array
+                // Update the status of childProcess from the childProcesses array
                 const index = childProcesses.findIndex((item) => item.childProcess === childProcess.pid);
                 if (index !== -1) {
-                    childProcesses.splice(index, 1);
-                    console.log(`Child process ${childProcess.pid} removed from the array`);
+                    childProcesses[index].status = 'Not Streaming';
+                    console.log(`Child process [ ${childProcess.pid} ] status updated`);
+                    console.log(childProcesses)
                 }
 
                 // Revert back the isAllowedToStream parameter
@@ -102,22 +103,12 @@ router.route('/stream/start').post(async (req, res) => {
         });
 
         // Add the child process to the array if no error occurred
-        childProcesses.push({ childProcess: childProcess.pid, url: receiver_ringserver });
+        childProcesses.push({ childProcess: childProcess.pid, url: receiver_ringserver , status: 'Streaming'});
         console.log(childProcesses);
 
         await setIsAllowedToStream(req.body.url, req.body.toggleValue); // Call the function that toggles the parameter isAllowedToStream
 
-        // Add 2-second delay to listen for slink2dali error before sending json response
-        if (!hasError) {
-            setTimeout(() => {
-                res.status(200).json({ message: 'Command executed successfully' });
-            }, 2000);
-        } else {
-            setTimeout(() => {
-                res.status(500).json({ message: 'Error encountered on slink2dali' });
-            }, 2000);
-        }
-
+        res.status(200).json({ message: 'Child process spawned successfully' });
     } catch (error) {
         console.error(`In starting slink2dali: ${error}`);
         if(childProcess){
@@ -165,5 +156,10 @@ router.post('/stream/stop', async (req, res) => {
         res.status(500).json({ message: 'Internal Server Error' });
     }
 });
+
+router.get('/stream/status', async (req, res) => {
+    res.status(200).json({ message: 'Get Streams Status Success', payload: childProcesses })
+    console.log('Success')
+})
 
 module.exports = router;
