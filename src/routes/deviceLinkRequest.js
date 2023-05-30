@@ -3,6 +3,7 @@ const router = express.Router();
 const fs = require('fs')
 const getmac = require('getmac')
 const axios = require('axios')
+const path = require('path');
 const { body, validationResult } = require('express-validator');
 require('dotenv').config()
 const https = require('https')
@@ -31,17 +32,12 @@ async function request_auth_token(username, password) {
     let retVal = null;
 
     try {
-        const filePath = 'src/localDBs/token.json';
+        const filePath = path.resolve(__dirname, '../localDBs', 'token.json');
         let data = { accessToken: null, role: "sensor" };
 
-        try {
-            const tokenString = await fs.promises.readFile(filePath, 'utf-8');
-            data = JSON.parse(tokenString);
-            console.log("accessToken read from json file: " + data.accessToken);
-        } catch (error) {
-            // File does not exist, create it
-            await fs.promises.writeFile(filePath, JSON.stringify(data), 'utf-8');
-        }
+        const tokenString = await fs.promises.readFile(filePath, 'utf-8');
+        data = JSON.parse(tokenString);
+        console.log("accessToken read from json file: " + data.accessToken);
 
         if (data.accessToken != null) {
             retVal = data.accessToken;
@@ -65,7 +61,7 @@ async function request_auth_token(username, password) {
                 accessToken: response.data.accessToken,
                 role: data.role
             };
-            await fs.promises.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken));
+            await fs.promises.writeFile(filePath, JSON.stringify(jsonToken));
             retVal = response.data.accessToken;
         }
     } catch (error) {
@@ -126,9 +122,10 @@ router.post('/',
                         Authorization: `Bearer ${token}`
                     }
                 })
-
+            
+            const deviceInfoPath = path.resolve(__dirname, '../localDBs', 'deviceInfo.json');
             // Save deviceInfo coming from the response from request to W1
-            await fs.promises.writeFile("src/localDBs/deviceInfo.json", JSON.stringify(response.data.payload));
+            await fs.promises.writeFile(deviceInfoPath, JSON.stringify(response.data.payload));
 
             res.status(response.status).json({
                 status: response.status,
