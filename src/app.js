@@ -13,6 +13,7 @@ const port = process.env.NODE_ENV === 'production'
 const deviceInfoRouter = require('./routes/deviceInfo')
 const serversRouter = require('./routes/servers')
 const deviceLinkRequestRouter = require('./routes/deviceLinkRequest')
+const deviceRouter = require('./routes/device')
 
 app.use(cors())
 // Allow all request from all sources for now. TODO: restrict cross-origin requests
@@ -26,6 +27,7 @@ app.use(bodyParser.json())
 app.use('/deviceInfo', deviceInfoRouter)
 app.use('/servers', serversRouter)
 app.use('/deviceLinkRequest', deviceLinkRequestRouter)
+app.use('/device', deviceRouter)
 
 // Function for creating local file store directory and files if it doesn't exists
 async function createLocalFileStoreDir() {
