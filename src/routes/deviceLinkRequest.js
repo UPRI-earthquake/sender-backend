@@ -3,6 +3,7 @@ const router = express.Router();
 const fs = require('fs')
 const getmac = require('getmac')
 const axios = require('axios')
+const path = require('path');
 const { body, validationResult } = require('express-validator');
 require('dotenv').config()
 const https = require('https')
@@ -10,25 +11,13 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 router.use(express.json())
 
-// TODO: create a function for getting the device streamId
+// A function for getting the device streamId from rshake
 async function generate_streamId() {
-    // TODO: Get streamID from rshake // TODO: Parse streamId and save details to deviceInfo.json
     let retVal = ""
     const streamId = "AM_R3B2D_00_ENZ,AM_R3B2D_00_ENN" // mock values
 
     try {
-        const deviceInfo = {
-            deviceInfo: {
-                network: streamId,
-                station: streamId,
-                location: streamId,
-                elevation: streamId,
-                channel: streamId,
-                streamId: streamId
-            }
-        };
-        await fs.promises.writeFile("src/localDBs/deviceInfo.json", JSON.stringify(deviceInfo));
-
+        // TODO: Get streamID from rshake. No parsing required here.
         retVal = streamId
     } catch (error) {
         retVal = { status: 400, message: "StreamID not acquired" }
@@ -41,10 +30,15 @@ async function generate_streamId() {
 // note: Always check if there's an existing token in localDB, if none, request from auth server
 async function request_auth_token(username, password) {
     let retVal = null;
+
     try {
-        const tokenString = await fs.promises.readFile('src/localDBs/token.json', 'utf-8');
-        const data = JSON.parse(tokenString);
+        const filePath = path.resolve(__dirname, '../localDBs', 'token.json');
+        let data = { accessToken: null, role: "sensor" };
+
+        const tokenString = await fs.promises.readFile(filePath, 'utf-8');
+        data = JSON.parse(tokenString);
         console.log("accessToken read from json file: " + data.accessToken);
+
         if (data.accessToken != null) {
             retVal = data.accessToken;
         } else {
@@ -67,7 +61,7 @@ async function request_auth_token(username, password) {
                 accessToken: response.data.accessToken,
                 role: data.role
             };
-            await fs.promises.writeFile("src/localDBs/token.json", JSON.stringify(jsonToken));
+            await fs.promises.writeFile(filePath, JSON.stringify(jsonToken));
             retVal = response.data.accessToken;
         }
     } catch (error) {
@@ -128,6 +122,10 @@ router.post('/',
                         Authorization: `Bearer ${token}`
                     }
                 })
+            
+            const deviceInfoPath = path.resolve(__dirname, '../localDBs', 'deviceInfo.json');
+            // Save deviceInfo coming from the response from request to W1
+            await fs.promises.writeFile(deviceInfoPath, JSON.stringify(response.data.payload));
 
             res.status(response.status).json({
                 status: response.status,

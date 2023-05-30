@@ -1,22 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const fs = require('fs')
+const path = require('path')
 const bodyParser = require('body-parser')
 const Joi = require('joi');
 const { Result } = require('express-validator');
 
 router.use(bodyParser.json())
 
-router.route('/getList').get(
-    (req, res) => {
-        // Read the local file store
-        fs.readFile('src/localDBs/servers.json', 'utf-8', function (err, jsonString) {
-            const data = JSON.parse(jsonString);
-            console.log(data)
-            res.json(data)
-        })
-    }
-)
+router.route('/getList').get(async (req, res) => {
+  try {
+    // Read the file
+    const filePath = path.resolve(__dirname, '../localDBs', 'servers.json');
+    const jsonString = await fs.promises.readFile(filePath, 'utf-8');
+    const data = JSON.parse(jsonString);
+    console.log(data);
+    res.status(200).json(data);
+  } catch (err) {
+    console.error(`Error reading servers.js: ${err}`);
+    res.status(500).json({ message: 'Error getting servers list' });
+  }
+});
 
 
 const serverInputSchema = Joi.object().keys({
@@ -34,7 +38,8 @@ router.route('/add').post(async (req, res) => {
         }
         
         // Read data from servers.json file
-        const jsonString = await fs.promises.readFile('src/localDBs/servers.json', 'utf-8');
+        const filePath = path.resolve(__dirname, '../localDBs', 'servers.json');
+        const jsonString = await fs.promises.readFile(filePath, 'utf-8');
         const existingServers = JSON.parse(jsonString);
     
         // Create new server object to add to servers.json file
@@ -56,7 +61,7 @@ router.route('/add').post(async (req, res) => {
         existingServers.push(newServer);
     
         // Write updated array to servers.json file
-        await fs.promises.writeFile("src/localDBs/servers.json", JSON.stringify(existingServers));
+        await fs.promises.writeFile(filePath, JSON.stringify(existingServers));
     
         console.log("Server added succesfully")
         return res.status(200).json({ message: "Server added successfully" });
