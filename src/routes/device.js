@@ -3,10 +3,11 @@ const router = express.Router();
 const { spawn, exec } = require('child_process');
 const fs = require('fs')
 const bodyParser = require('body-parser')
+const { getChildProcesses } = require('./childProcess.module')
 
 router.use(bodyParser.json())
 
-let childProcesses = []; // Global Array to store child processes
+let childProcesses = getChildProcesses(); // Global Array to store child processes
 
 // A function that changes the isAllowedToStream parameter from servers.json file
 async function setIsAllowedToStream(url, toggleValue) {
