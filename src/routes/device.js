@@ -9,29 +9,6 @@ router.use(bodyParser.json())
 
 let childProcesses = getChildProcesses(); // Global Array to store child processes
 
-// A function that changes the isAllowedToStream parameter from servers.json file
-async function setIsAllowedToStream(url, toggleValue) {
-    // Read data from servers.json file
-    const jsonString = await fs.promises.readFile('src/localDBs/servers.json', 'utf-8');
-    const existingServers = JSON.parse(jsonString);
-
-    // Find the server with the matching URL from servers.json file
-    const server = existingServers.find((item) => item.url === url);
-
-    if ( !server) {
-      throw new Error('Target server URL not found on the local file store')
-    }
-
-    // Update the isAllowedToStream parameter depending on the toggleValue from frontend
-    if (toggleValue === true) {
-        server.isAllowedToStream = true;
-    } else { server.isAllowedToStream = false; }
-
-    // Save the updated servers array back to the json file
-    await fs.promises.writeFile('src/localDBs/servers.json', JSON.stringify(existingServers));
-
-}
-
 // POST endpoint (/stream/start) to execute a slink2dali childprocess from nodejs
 router.route('/stream/start').post(async (req, res) => {
     console.log('POST Request sent on /device/stream endpoint')
@@ -81,8 +58,6 @@ router.route('/stream/start').post(async (req, res) => {
                     console.log(childProcesses)
                 }
 
-                // Revert back the isAllowedToStream parameter
-                setIsAllowedToStream(req.body.url, 'false')
             }
         });
 
@@ -107,8 +82,6 @@ router.route('/stream/start').post(async (req, res) => {
         childProcesses.push({ childProcess: childProcess.pid, url: receiver_ringserver , status: 'Streaming'});
         console.log(childProcesses);
 
-        await setIsAllowedToStream(req.body.url, req.body.toggleValue); // Call the function that toggles the parameter isAllowedToStream
-
         res.status(200).json({ message: 'Child process spawned successfully' });
     } catch (error) {
         console.error(`In starting slink2dali: ${error}`);
@@ -127,9 +100,6 @@ router.post('/stream/stop', async (req, res) => {
 
     try {
         const { url, toggleValue } = req.body;
-
-        // Update the isAllowedToStream parameter in json file
-        setIsAllowedToStream(url, toggleValue);
 
         // Find the child process with the specified URL
         const childProcessObj = childProcesses.find((item) => item.url === url);
