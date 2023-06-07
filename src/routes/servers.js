@@ -5,6 +5,7 @@ const path = require('path')
 const bodyParser = require('body-parser')
 const Joi = require('joi');
 const { Result } = require('express-validator');
+const { addChildProcess } = require('./childProcess.module')
 
 router.use(bodyParser.json())
 
@@ -62,6 +63,8 @@ router.route('/add').post(async (req, res) => {
     
         // Write updated array to servers.json file
         await fs.promises.writeFile(filePath, JSON.stringify(existingServers));
+
+        await addChildProcess(req.body.hostName, req.body.url); // add entry to childProcesses object on successful add server
     
         console.log("Server added succesfully")
         return res.status(200).json({ message: "Server added successfully" });
