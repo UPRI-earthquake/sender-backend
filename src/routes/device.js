@@ -7,17 +7,23 @@ const { getChildProcesses, checkChildProcessStatus, updateChildProcessStatus } =
 
 router.use(bodyParser.json())
 
-let childProcesses = getChildProcesses(); // Global Array to store child processes
+let childProcesses = null;
+
+async function populateChildProcesses() {
+    try {
+        childProcesses = await getChildProcesses();
+        return childProcesses;
+    } catch (error) {
+        console.error(`Error getting child processes: ${error}`);
+    }
+}
 
 // Middleware function to check the streaming status to the specified server url; status should not be 'Streaming'
-function childProcessStatusCheck(req, res, next) {
-    console.log(childProcesses)
-    const childProcess = checkChildProcessStatus(req.body.url);
-    console.log(childProcess)
-
-    if (childProcess && childProcess.status === 'Streaming') {
+async function childProcessStatusCheck(req, res, next) {
+    const childProcessStatus = await checkChildProcessStatus(req.body.url);
+    if (!childProcessStatus) {
         // Child process is already streaming
-        return res.status(400).json({ error: 'Child process is already streaming in the specified URL' });
+        return res.status(409).json({ message: 'Child process is already streaming in the specified URL' });
     }
 
     next(); // Proceed to the next middleware/route handler
@@ -25,9 +31,10 @@ function childProcessStatusCheck(req, res, next) {
 
 
 // POST endpoint (/stream/start) to execute a slink2dali childprocess from nodejs
-router.route('/stream/start').post( childProcessStatusCheck, async (req, res) => {
+router.route('/stream/start').post(childProcessStatusCheck, async (req, res) => {
     console.log('POST Request sent on /device/stream endpoint')
     let childProcess = null;
+    childProcesses = await populateChildProcesses(); // Call the async function to populate the childProcesses array
 
     try {
         // TODO: Add necessary options to be sent as arguments of the slink2dali (i.e. token, target ringserver etc.)
@@ -35,7 +42,7 @@ router.route('/stream/start').post( childProcessStatusCheck, async (req, res) =>
         const net_sta = 'GE_TOLI2'; // CHANGE THIS. This info should come from deviceInfo.json
         const sender_slink2dali = 'geofon.gfz-potsdam.de:18000'; // CHANGE THIS
         const receiver_ringserver = req.body.url;
-        const options = ['-vvv', '-S', net_sta , sender_slink2dali, receiver_ringserver];
+        const options = ['-vvv', '-S', net_sta, sender_slink2dali, receiver_ringserver];
 
         // Execute the command using spawn
         childProcess = spawn(command, options);
@@ -55,21 +62,20 @@ router.route('/stream/start').post( childProcessStatusCheck, async (req, res) =>
         });
 
         // Listen for 'exit' event from the child process
-        childProcess.on('exit', async(code, signal) => {
+        childProcess.on('exit', async (code, signal) => {
             console.log(`Child process exited with code ${code} and signal ${signal}`);
 
             if (hasError) {
                 // Cleanup functions: 
                 childProcess.kill(); // Terminate the child process
-                updateChildProcessStatus(receiver_ringserver, 'Not Streaming'); // Update the status of childProcess from the childProcesses array to 'Not Streaming'
-                console.log(childProcesses)
+                childProcesses = await updateChildProcessStatus(receiver_ringserver, null, 'Not Streaming'); // Update the status of childProcess from the childProcesses array to 'Not Streaming'
             }
         });
 
         // Listen for 'stdout' event from the child process
         childProcess.stdout.on('data', (data) => {
             console.log(`Command output: ${data}`); // Log slink2dali output 
-            
+
             // Listen for 'error' logs in slink2dali
             if (data.includes('error')) {
                 console.error('Error encountered in slink2dali logs');
@@ -83,14 +89,13 @@ router.route('/stream/start').post( childProcessStatusCheck, async (req, res) =>
             console.error(`Command error: ${data}`);
         });
 
-        updateChildProcessStatus(receiver_ringserver, 'Streaming'); // Update the childProcess status in the array to 'streaming'
-        console.log(childProcesses);
+        childProcesses = await updateChildProcessStatus(receiver_ringserver, childProcess, 'Streaming'); // Update the childProcess status in the array to 'streaming'
 
         res.status(200).json({ message: 'Child process spawned successfully' });
     } catch (error) {
         console.error(`Error spawning slink2dali: ${error}`);
-        if(childProcess){
-          childProcess.kill();
+        if (childProcess) {
+            childProcess.kill();
         }
         // Handle the error and send an appropriate response
         res.status(500).json({ error: 'Error spawning child process' });
@@ -100,7 +105,6 @@ router.route('/stream/start').post( childProcessStatusCheck, async (req, res) =>
 
 router.post('/stream/stop', async (req, res) => {
     console.log('POST Request sent on /stream/stop endpoint');
-    console.log(childProcesses)
 
     try {
         const { url, toggleValue } = req.body;
@@ -133,8 +137,9 @@ router.post('/stream/stop', async (req, res) => {
 });
 
 router.get('/stream/status', async (req, res) => {
+    childProcesses = await populateChildProcesses();
+    console.log(childProcesses)
     res.status(200).json({ message: 'Get Streams Status Success', payload: childProcesses })
-    console.log('Success')
 })
 
 module.exports = router;

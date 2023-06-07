@@ -4,41 +4,75 @@ const path = require('path')
 let childProcesses = [];
 
 async function getChildProcesses() {
-	try {
-		const localFileStoreDir = path.resolve(__dirname, '../localDBs');
-		const jsonString = await fs.promises.readFile(`${localFileStoreDir}/servers.json`, 'utf-8');
-		const serversList = JSON.parse(jsonString);
-		
-		// Modify each server object and add additional parameters
-    const modifiedServers = serversList.map(server => ({
-      ...server,
-      childProcess: null,
-      status: 'Not Streaming'
-    }));
-
-    childProcesses.push(...modifiedServers); // Push the modified servers array to the childProcesses array
+	if (childProcesses.length > 0) { // childProcesses object is not null
 		return childProcesses;
-	} catch (error) {
-		console.log(`Error reading file: ${error}`)
-		return;
+	} else { // childProcesses object initialization
+		try {
+			const localFileStoreDir = path.resolve(__dirname, '../localDBs');
+			const jsonString = await fs.promises.readFile(`${localFileStoreDir}/servers.json`, 'utf-8');
+			const serversList = JSON.parse(jsonString);
+	
+			// Create a map to keep track of unique URLs
+			const urlMap = new Map();
+	
+			// Iterate over the serversList and update the childProcesses object
+			childProcesses = serversList.reduce((result, server) => {
+				const { url } = server;
+				if (!urlMap.has(url)) {
+					// Add the server to childProcesses object if it's a unique URL
+					result.push({
+						...server,
+						childProcess: null,
+						status: 'Not Streaming'
+					});
+					urlMap.set(url, true); // Mark the URL as added to the map
+				}
+				return result;
+			}, []);
+	
+			return childProcesses;
+		} catch (error) {
+			console.log(`Error reading file: ${error}`);
+			return [];
+		}
 	}
 }
 
-function checkChildProcessStatus(url) {
-	const childProcess = childProcesses.find(server => server.url === url);
-  return childProcess.status; // return status of the specified url
+childProcesses = getChildProcesses();
+
+async function checkChildProcessStatus(url) {
+	const childProcess = await childProcesses.find(server => server.url === url);
+	console.log(`MODULE: ${JSON.stringify(childProcess)}`)
+	if (childProcess.status != 'Streaming') { // Child process' status IS NOT 'Streaming'
+		return childProcesses; // return childProcesses object
+	} else {
+		return; // return null
+	}
 }
 
-function updateChildProcessStatus(url, status) {
-  const childProcess = childProcesses.find(server => server.url === url);
-  if (childProcess) {
-    childProcess.status = status;
+async function updateChildProcessStatus(url, childProcess, status) {
+  const stream = await childProcesses.find(server => server.url === url);
+  if (stream) {
+		stream.childProcess = childProcess;
+    stream.status = status;
   }
+	return childProcesses;
+}
+
+async function addChildProcess(hostName, url) {
+	const process = {
+		url: url,
+		hostName: hostName,
+		childProcess: null,
+		status: 'Not Streaming'
+	}
+  childProcesses.push(process);
 }
 
 
 module.exports = {
   getChildProcesses,
 	checkChildProcessStatus,
-  updateChildProcessStatus
+  updateChildProcessStatus,
+	addChildProcess
 };
