@@ -24,4 +24,21 @@ async function getChildProcesses() {
 	}
 }
 
-module.exports = getChildProcesses;
+function checkChildProcessStatus(url) {
+	const childProcess = childProcesses.find(server => server.url === url);
+  return childProcess.status; // return status of the specified url
+}
+
+function updateChildProcessStatus(url, status) {
+  const childProcess = childProcesses.find(server => server.url === url);
+  if (childProcess) {
+    childProcess.status = status;
+  }
+}
+
+
+module.exports = {
+  getChildProcesses,
+	checkChildProcessStatus,
+  updateChildProcessStatus
+};
