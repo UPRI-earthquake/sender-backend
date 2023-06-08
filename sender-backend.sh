@@ -58,6 +58,62 @@ function pull_container() {
   fi
 }
 
+function create_container() {
+  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    echo "Container $CONTAINER already exists."
+    return 0 # Success
+  else
+    docker create \
+      --name "$CONTAINER" \
+      --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \ # work around for oci runtime error
+      --volume /opt/settings:/opt/settings:ro \ # contains NET, STAT info
+      --volume xxx:/app/slink2dali:ro \ # location of slink2dali executable
+      "$IMAGE"
+
+    if [[ $? -eq 0 ]]; then
+      echo "Container $CONTAINER created successfully."
+      return 0
+    else
+      echo "Failed to create container $CONTAINER."
+      return 1
+    fi
+
+  fi
+}
+
+# function: start_container()
+# TODO: check if container is running
+# TODO: start container if it's not running
+# TODO: check if container is successfully started
+function start_container() {
+  if docker container inspect --format="{{.State.Running}}" "$CONTAINER" >/dev/null 2>&1; then
+    echo "Container $CONTAINER is already running."
+  else
+    docker start "$CONTAINER"
+    if [[ $? -eq 0 ]]; then
+      echo "Container $CONTAINER started successfully."
+    else
+      echo "Failed to start container $CONTAINER."
+    fi
+  fi
+}
+
+# function: stop_container()
+# TODO: check if container is running
+# TODO: stop container if it's running
+# TODO: check if container is successfully stopped
+function stop_container() {
+  if docker container inspect --format="{{.State.Running}}" "$CONTAINER" >/dev/null 2>&1; then
+    docker stop "$CONTAINER"
+    if [[ $? -eq 0 ]]; then
+      echo "Container $CONTAINER stopped successfully."
+    else
+      echo "Failed to stop container $CONTAINER."
+    fi
+  else
+    echo "Container $CONTAINER is not running."
+  fi
+}
 
 ## execute function based on argument: INSTALL_SERVICE, PULL, CREATE, START, STOP
 case $1 in
