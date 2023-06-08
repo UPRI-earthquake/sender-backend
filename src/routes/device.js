@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { spawn, exec } = require('child_process');
 const fs = require('fs')
+const path = require('path')
 const bodyParser = require('body-parser')
 const { getChildProcesses, checkChildProcessStatus, updateChildProcessStatus } = require('./childProcess.module')
 
@@ -38,11 +39,15 @@ router.route('/stream/start').post(childProcessStatusCheck, async (req, res) => 
 
     try {
         // TODO: Add necessary options to be sent as arguments of the slink2dali (i.e. token, target ringserver etc.)
+				const localFileStoreDir = path.resolve(__dirname, '../localDBs');
+				const jsonString = await fs.promises.readFile(`${localFileStoreDir}/token.json`, 'utf-8');
+				const token = JSON.parse(jsonString);
+
         const command = `${process.env.SLINK2DALIPATH}/slink2dali`;
         const net_sta = 'GE_TOLI2'; // CHANGE THIS. This info should come from deviceInfo.json
         const sender_slink2dali = 'geofon.gfz-potsdam.de:18000'; // CHANGE THIS
         const receiver_ringserver = req.body.url;
-        const options = ['-vvv', '-S', net_sta, sender_slink2dali, receiver_ringserver];
+        const options = ['-vvv', '-a', token.accessToken, '-S', net_sta, sender_slink2dali, receiver_ringserver];
 
         // Execute the command using spawn
         childProcess = spawn(command, options);
