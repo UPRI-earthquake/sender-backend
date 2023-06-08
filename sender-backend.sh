@@ -3,6 +3,8 @@
 # Constants
 SERVICE="sender-backend.service"
 UNIT_FILE="/lib/systemd/system/$SERVICE"
+IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.1" #TODO: Change tag to :latest
+CONTAINER="sender-backend"
 
 function install_service() {
   # Check if unit-file exists
@@ -40,6 +42,21 @@ EOF
   fi
 }
 
+function pull_container() {
+  if docker inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "Image $IMAGE already exists."
+    return 0 # Success
+  else
+    docker pull "$IMAGE"
+    if [[ $? -eq 0 ]]; then
+      echo "Image $IMAGE pulled successfully."
+      return 0
+    else
+      echo "Failed to pull image $IMAGE."
+      return 1
+    fi
+  fi
+}
 
 
 ## execute function based on argument: INSTALL_SERVICE, PULL, CREATE, START, STOP
