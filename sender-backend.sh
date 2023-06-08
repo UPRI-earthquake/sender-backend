@@ -3,7 +3,7 @@
 # Constants
 SERVICE="sender-backend.service"
 UNIT_FILE="/lib/systemd/system/$SERVICE"
-IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.1" #TODO: Change tag to :latest
+IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.2" #TODO: Change tag to :latest
 CONTAINER="sender-backend"
 
 function install_service() {
@@ -63,12 +63,22 @@ function create_container() {
     echo "Container $CONTAINER already exists."
     return 0 # Success
   else
+    # get IP of rshake accessible from within the container
+    local host_ip=`ip addr show docker0 | grep -Po 'inet \K[\d.]+'`
+    # set domain name on which host_ip will be accessible from within container
+    local in_docker_hostname="docker-host"
+    # create container
     docker create \
       --name "$CONTAINER" \
-      --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \ # work around for oci runtime error
-      --volume /opt/settings:/opt/settings:ro \ # contains NET, STAT info
-      --volume xxx:/app/slink2dali:ro \ # location of slink2dali executable
+      --add-host $in_docker_hostname:$host_ip \
+      --ip "172.17.0.20" \
+      --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \
+      --volume /opt/settings:/opt/settings:ro \
+      --volume UPRI-volume:/app/localDBs \
       "$IMAGE"
+    # 1st volume: workaround for docker's oci runtime error
+    # 2nd volume: contains NET and STAT info
+    # 3rd volume: will contain local file storage of sender-backend server
 
     if [[ $? -eq 0 ]]; then
       echo "Container $CONTAINER created successfully."
