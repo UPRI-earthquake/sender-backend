@@ -1,17 +1,24 @@
-# Stage 1: base, minimal setup for dev, shall contain non-js deps.
-#          To be bind-mounted to local dev files (includint node_modules)
-FROM arm64v8/node:18-alpine as base
+# Stage 1: Build slin2kdali for node18-alpine as build env
+FROM arm64v8/node:18-alpine as build-env
 
-EXPOSE 5001
+RUN apk add --no-cache build-base # install build tools
 
 WORKDIR /app
+
+# TODO: how to import slink2dali directory?
+COPY ./tests2d/ .
+
+RUN make
 
 # add non-js deps (for deps other than node_modules)
 #RUN apk add --no-cache python3 make g++
 
-# Stage 2: prod, inherits base, adds src code, pre-installs js deps
-# TODO: Test for production build
-FROM base as prod
+# Stage 2: prod for nodejs, adds src code, pre-installs js deps
+FROM arm64v8/node:18-alpine as prod
+
+COPY --from=build-env /app/slink2dali /app/slink2dali
+
+WORKDIR /app
 
 RUN apk add dumb-init
 
@@ -21,8 +28,10 @@ COPY --chown=node:node package*.json ./
 RUN npm ci --only=production --loglevel=verbose
 
 # copy codebase
+# TODO: copy src code only
 COPY --chown=node:node . ./
 
+EXPOSE 5001
 USER node
 CMD ["dumb-init", "npm", "run", "start"]
 
