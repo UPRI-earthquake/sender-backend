@@ -13,10 +13,11 @@ async function initializeStreamsObject() {
 
     // Iterate over the serversList and update the StreamsObject
     serversList.forEach((server) => {
-      const { url } = server;
+      const { url, hostName } = server;
       if (!streamsObject[url]) {
         // Add the server to StreamsObject if it's a unique URL
         streamsObject[url] = {
+          hostName: hostName,
           childProcess: null,
           status: 'Not Streaming',
         };

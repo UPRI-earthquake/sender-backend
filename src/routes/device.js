@@ -59,8 +59,8 @@ router.route('/stream/status').get(async (req, res) => {
 
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
-      const { status } = streamsObject[url];
-      outputObject[url] = { status };
+      const { status, hostName } = streamsObject[url];
+      outputObject[url] = { status, hostName };
     }
   }
 
