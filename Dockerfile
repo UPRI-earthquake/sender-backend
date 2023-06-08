@@ -2,7 +2,7 @@
 #          To be bind-mounted to local dev files (includint node_modules)
 FROM arm64v8/node:18-alpine as base
 
-EXPOSE 5000
+EXPOSE 5001
 
 WORKDIR /app
 
