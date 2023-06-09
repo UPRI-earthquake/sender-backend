@@ -119,34 +119,30 @@ function create_container() {
   fi
 }
 
-# function: start_container()
-# TODO: check if container is running
-# TODO: start container if it's not running
-# TODO: check if container is successfully started
 function start_container() {
-  if docker container inspect --format="{{.State.Running}}" "$CONTAINER" >/dev/null 2>&1; then
+  if [[ $(docker container inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
     echo "Container $CONTAINER is already running."
   else
     docker start "$CONTAINER"
     if [[ $? -eq 0 ]]; then
       echo "Container $CONTAINER started successfully."
+      return 0
     else
       echo "Failed to start container $CONTAINER."
+      return 1
     fi
   fi
 }
 
-# function: stop_container()
-# TODO: check if container is running
-# TODO: stop container if it's running
-# TODO: check if container is successfully stopped
 function stop_container() {
-  if docker container inspect --format="{{.State.Running}}" "$CONTAINER" >/dev/null 2>&1; then
+  if [[ $(docker container inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
     docker stop "$CONTAINER"
     if [[ $? -eq 0 ]]; then
       echo "Container $CONTAINER stopped successfully."
+      return 0
     else
       echo "Failed to stop container $CONTAINER."
+      return 1
     fi
   else
     echo "Container $CONTAINER is not running."
