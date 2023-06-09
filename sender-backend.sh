@@ -174,24 +174,5 @@ case $1 in
     ;;
 esac
 
-# On install script
-# get sender-backend, sender-frontend scripts
-# install them on usr/local/bin
-# call pull, create, install
-# use postboot service for starting and stopping each container.service?
-
-#myshake@raspberryshake:/opt$ cat /lib/systemd/system/raspberryshake.service
-#[Unit]
-#Description=Raspberry Shake Boot Script
-#After=ntpd.service docker.service
-#Wants=ntpd.service
-#
-#[Service]
-#Type=oneshot
-#User=myshake
-#ExecStart=/usr/local/bin/postboot.rshake
-#
-#[Install]
-#WantedBy=multi-user.target
 
 
