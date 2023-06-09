@@ -1,12 +1,18 @@
 // import app from './app'
 const app = require('./app')
+const { createLocalFileStoreDir } = require('./controllers/localFileStore.controller')
 const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stream.controller')
 require('dotenv').config()
 
-// Asynchronous function for initializing streamsObject dictionary, then start streaming on each supplied url.
+// Asynchronous function for:
+// 1. creating local file store,
+// 2. initializing streamsObject dictionary, 
+// 3. then start streaming on each supplied url.
 async function init() {
   try {
+    await createLocalFileStoreDir();
     let streamsObject = await initializeStreamsObject();
+    console.log(streamsObject)
 
     for (const url in streamsObject) {
       if (streamsObject.hasOwnProperty(url)) {
