@@ -51,6 +51,16 @@ async function updateStreamStatus(url, childProcess, status) {
   return streamsObject;
 }
 
+
+async function addNewStream(url, hostName) {
+  streamsObject[url] = {
+    hostName: hostName,
+    childProcess: null,
+    status: 'Not Streaming'
+  };
+  console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
+}
+
 // Function for spawning slink2dali child process
 async function spawnSlink2dali(receiver_ringserver) {
   let childProcess = null;
@@ -125,5 +135,6 @@ module.exports = {
   initializeStreamsObject,
   getStreamsObject,
   updateStreamStatus,
+  addNewStream,
   spawnSlink2dali
 };
