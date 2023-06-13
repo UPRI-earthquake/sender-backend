@@ -32,9 +32,9 @@ EOF
 
       # Check if unit-file is successfully written as a disabled service
       systemctl daemon-reload
-      systemctl --quiet disable "$SERVICE" >/dev/null 2>&1
+      systemctl --quiet enable "$SERVICE" >/dev/null 2>&1
       if [[ $? -eq 0 ]]; then
-          echo "$SERVICE installed as a disabled service."
+          echo "$SERVICE installed as an enabled service."
           return 0  # Success
       else
           echo "Something went wrong in installing $SERVICE."
