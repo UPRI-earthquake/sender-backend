@@ -12,7 +12,7 @@ router.use(bodyParser.json())
 router.route('/getList').get(async (req, res) => {
   try {
     // Read the file
-    const filePath = path.resolve(__dirname, '../localDBs', 'servers.json');
+    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`
     const jsonString = await fs.promises.readFile(filePath, 'utf-8');
     const data = JSON.parse(jsonString);
     console.log(data);
@@ -32,7 +32,7 @@ const serverInputSchema = Joi.object().keys({
 // Add middleware function that checks if the device is already linked to an account
 async function linkingStatusCheck(req, res, next) {
   // Read data from token.json file
-  const filePath = path.resolve(__dirname, '../localDBs', 'token.json');
+  const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`
   const jsonString = await fs.promises.readFile(filePath, 'utf-8');
   const token = JSON.parse(jsonString);
 
@@ -54,7 +54,7 @@ router.route('/add').post( linkingStatusCheck, async (req, res) => {
         }
         
         // Read data from servers.json file
-        const filePath = path.resolve(__dirname, '../localDBs', 'servers.json');
+        const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`
         const jsonString = await fs.promises.readFile(filePath, 'utf-8');
         const existingServers = JSON.parse(jsonString);
     

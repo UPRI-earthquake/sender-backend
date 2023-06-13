@@ -8,7 +8,7 @@ router.use(bodyParser.json())
 
 router.get('/', async (req, res) => {
   try {
-    const filePath = path.resolve(__dirname, '../localDBs', 'deviceInfo.json')
+    const filePath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`
 
     let data = {
       "deviceInfo": {
