@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub 
-BACKEND_URL= "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/dockerize/sender-backend.sh?token=GHSAT0AAAAAAB7VZD57NBJORDJOOLFR3PEIZEICYGA"
+BACKEND_URL="10.0.2.2:9999/sender-backend.sh"
 FRONTEND_URL=""
 
 # Install sender-backend and sender-frontend into /usr/local/bin directory
@@ -12,12 +12,12 @@ download_and_install_script() {
     local url=$1 script_name=$2
 
     # Download the script
-    curl -sSL "$url" -o "$INSTALL_DIR/$script_name" || {
+    sudo curl -sSL "$url" -o "$INSTALL_DIR/$script_name" || {
         echo "Failed to download script: $script_name"
         exit 1
     }
 
-    chmod +x "$INSTALL_DIR/$script_name" # Make the script executable
+    sudo chmod +x "$INSTALL_DIR/$script_name" # Make the script executable
 }
 
 # Download and install the backend script
@@ -30,7 +30,7 @@ download_and_install_script "$BACKEND_URL" "sender-backend"
 sender-backend PULL             && \
 sender-backend NETWORK_SETUP    && \
 sender-backend CREATE           && \
-sender-backend INSTALL_SERVICE  || {
+sudo sender-backend INSTALL_SERVICE  || {
     echo "Error in sender-backend container download & service installation. Aborting."
     exit 1
 }
@@ -44,7 +44,13 @@ sender-backend INSTALL_SERVICE  || {
 #    exit 1
 #}
 
+# start services
+sudo systemctl start sender-backend.service || {
+    echo "Error in starting sender-backend service. Aborting."
+    exit 1
+}
 
+echo "Sender programs installed and services started successfully."
 
 # get postboot script, install on usr/local/bin
 # install and enable postboot service
