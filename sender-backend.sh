@@ -3,7 +3,7 @@
 # Constants
 SERVICE="sender-backend.service"
 UNIT_FILE="/lib/systemd/system/$SERVICE"
-IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.2" #TODO: Change tag to :latest
+IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.3" #TODO: Change tag to :latest
 CONTAINER="sender-backend"
 DOCKER_NETWORK="UPRI-docker-network"
 
