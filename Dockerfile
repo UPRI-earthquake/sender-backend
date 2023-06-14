@@ -28,8 +28,8 @@ COPY --chown=node:node package*.json ./
 RUN npm ci --only=production --loglevel=verbose
 
 # copy codebase
-# TODO: copy src code only
-COPY --chown=node:node . ./
+COPY --chown=node:node src/ ./src/
+COPY --chown=node:node .env ./
 
 EXPOSE 5001
 USER node
