@@ -17,11 +17,12 @@ function install_service() {
 [Unit]
 Description=UPRI: Sender Backend Service
 After=docker.service
-Wants=docker.service
+Requires=docker.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+User=myshake
 ExecStart=/usr/local/bin/sender-backend START
 ExecStop=/usr/local/bin/sender-backend STOP
 
@@ -107,6 +108,7 @@ function create_container() {
             # 1st volume: workaround for docker's oci runtime error
             # 2nd volume: contains NET and STAT info
             # 3rd volume: will contain local file storage of sender-backend server
+            # net should make sender-backend be accessible by name from frontend
 
         if [[ $? -eq 0 ]]; then
             echo "Container $CONTAINER created successfully."
