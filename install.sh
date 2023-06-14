@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub 
-BACKEND_URL="10.0.2.2:9999/sender-backend.sh"
-FRONTEND_URL=""
+BACKEND_URL="10.0.2.2:9999/sender-backend/sender-backend.sh"
+FRONTEND_URL="10.0.2.2:9999/sender-frontend/sender-frontend.sh"
 
 # Install sender-backend and sender-frontend into /usr/local/bin directory
 INSTALL_DIR="/usr/local/bin"
@@ -24,11 +24,11 @@ download_and_install_script() {
 download_and_install_script "$BACKEND_URL" "sender-backend"
 
 # Download and install the frontend script
-#download_and_install_script "$FRONTEND_URL" "sender-frontend"
+download_and_install_script "$FRONTEND_URL" "sender-frontend"
 
 # sender-backend container & service installation
-sender-backend PULL             && \
 sender-backend NETWORK_SETUP    && \
+sender-backend PULL             && \
 sender-backend CREATE           && \
 sudo sender-backend INSTALL_SERVICE  || {
     echo "Error in sender-backend container download & service installation. Aborting."
@@ -36,21 +36,31 @@ sudo sender-backend INSTALL_SERVICE  || {
 }
 
 # sender-frontend container & service installation
-#sender-frontend PULL             && \
-#sender-frontend NETWORK_SETUP    && \
-#sender-frontend CREATE           && \
-#sender-frontend INSTALL_SERVICE  || {
-#    echo "Error in sender-frontend container & service installation. Aborting."
-#    exit 1
-#}
-
-# start services
-sudo systemctl start sender-backend.service || {
-    echo "Error in starting sender-backend service. Aborting."
+sender-frontend PULL             && \
+sender-frontend CREATE           && \
+sudo sender-frontend INSTALL_SERVICE  || {
+    echo "Error in sender-frontend container & service installation. Aborting."
     exit 1
 }
 
-echo "Sender programs installed and services started successfully."
+# start services
+if ! systemctl is-active --quiet sender-backend.service; then
+    sudo systemctl start sender-backend.service || {
+        echo "Error in starting sender-backend service. Aborting."
+        exit 1
+    }
+    echo "sender-backend service started successfully."
+else
+    echo "sender-backend service is already running."
+fi
 
-# get postboot script, install on usr/local/bin
-# install and enable postboot service
+if ! systemctl is-active --quiet sender-frontend.service; then
+    sudo systemctl start sender-frontend.service || {
+        echo "Error in starting sender-frontend service. Aborting."
+        exit 1
+    }
+    echo "sender-frontend service started successfully."
+else
+    echo "sender-frontend service is already running."
+fi
+
