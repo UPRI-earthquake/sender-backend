@@ -3,7 +3,7 @@
 # Constants
 SERVICE="sender-backend.service"
 UNIT_FILE="/lib/systemd/system/$SERVICE"
-IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.3" #TODO: Change tag to :latest
+IMAGE="ghcr.io/upri-earthquake/sender-backend:armv7" #TODO: Change tag to :latest
 CONTAINER="sender-backend"
 DOCKER_NETWORK="UPRI-docker-network"
 
@@ -74,10 +74,7 @@ function create_network() {
             --gateway 172.18.0.1 \
             --ip-range 172.18.0.0/24 \
             "$DOCKER_NETWORK"
-            # 1st volume: workaround for docker's oci runtime error
-            # 2nd volume: contains NET and STAT info
-            # 3rd volume: will contain local file storage of sender-backend server
-  
+
         if [[ $? -eq 0 ]]; then
             echo "Network $DOCKER_NETWORK created successfully."
             return 0
@@ -123,7 +120,7 @@ function create_container() {
 }
 
 function start_container() {
-    if [[ $(docker container inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
+    if [[ $(docker inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
         echo "Container $CONTAINER is already running."
     else
         docker start "$CONTAINER"
@@ -139,7 +136,7 @@ function start_container() {
 
 ## UNINSTALL FUNCTIONS
 function stop_container() {
-    if [[ $(docker container inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
+    if [[ $(docker inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
         docker stop "$CONTAINER"
         if [[ $? -eq 0 ]]; then
             echo "Container $CONTAINER stopped successfully."
