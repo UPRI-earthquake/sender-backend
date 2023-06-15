@@ -1,5 +1,5 @@
 # Stage 1: Build slin2kdali for node18-alpine as build env
-FROM arm64v8/node:18-alpine as build-env
+FROM arm32v7/node:18-alpine as build-env
 
 RUN apk add --no-cache build-base # install build tools
 
@@ -14,7 +14,7 @@ RUN make
 #RUN apk add --no-cache python3 make g++
 
 # Stage 2: prod for nodejs, adds src code, pre-installs js deps
-FROM arm64v8/node:18-alpine as prod
+FROM arm32v7/node:18-alpine as prod
 
 COPY --from=build-env /app/slink2dali /app/slink2dali
 
