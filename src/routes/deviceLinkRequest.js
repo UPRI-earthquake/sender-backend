@@ -5,7 +5,6 @@ const getmac = require('getmac')
 const axios = require('axios')
 const path = require('path');
 const { body, validationResult } = require('express-validator');
-require('dotenv').config()
 const https = require('https')
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
