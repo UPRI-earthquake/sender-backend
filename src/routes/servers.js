@@ -26,7 +26,7 @@ router.route('/getList').get(async (req, res) => {
 
 const serverInputSchema = Joi.object().keys({
     hostName: Joi.string().required(),
-    url: Joi.string().uri().required()
+    url: Joi.string().required()
 });
 
 // Add middleware function that checks if the device is already linked to an account
