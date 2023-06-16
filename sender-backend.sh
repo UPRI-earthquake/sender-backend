@@ -103,6 +103,7 @@ function create_container() {
             --volume /opt/settings:/opt/settings:ro \
             --volume UPRI-volume:/app/localDBs \
             --net UPRI-docker-network \
+            --env SLINK2DALIPATH=/app/slink2dali
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
             # 2nd volume: contains NET and STAT info
