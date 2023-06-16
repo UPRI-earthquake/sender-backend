@@ -71,7 +71,7 @@ async function spawnSlink2dali(receiver_ringserver) {
     const jsonString = await fs.promises.readFile(`${localFileStoreDir}/token.json`, 'utf-8');
     const token = JSON.parse(jsonString);
 
-    const command = `${process.env.SLINK2DALIPATH}/slink2dali`;
+    const command = `${process.env.SLINK2DALIPATH}`;
     const network = read_network()
     const station = read_station()
     const net_sta = `${network}_${station}`;
