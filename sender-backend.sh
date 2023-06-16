@@ -136,6 +136,7 @@ function start_container() {
     if [[ $(docker inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Container $CONTAINER is already running."
+        return 0
     else
         docker start "$CONTAINER"
         if [[ $? -eq 0 ]]; then
