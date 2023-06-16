@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub 
-BACKEND_URL="10.0.2.2:9999/sender-backend/sender-backend.sh"
-FRONTEND_URL="10.0.2.2:9999/sender-frontend/sender-frontend.sh"
+# Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub
+BACKEND_URL="10.196.16.130:8000/sender-backend/sender-backend.sh"
+FRONTEND_URL="10.196.16.130:8000/sender-frontend/sender-frontend.sh"
 
 # Install sender-backend and sender-frontend into /usr/local/bin directory
 INSTALL_DIR="/usr/local/bin"
