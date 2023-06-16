@@ -11,7 +11,7 @@ const { generate_streamId } = require('./utils');
 
 router.use(express.json())
 
-// Request token from auth server + save token to localDB 
+// Request token from auth server + save token to localDB
 // note: Always check if there's an existing token in localDB, if none, request from auth server
 async function request_auth_token(username, password) {
     let retVal = null;
