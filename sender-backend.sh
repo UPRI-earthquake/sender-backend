@@ -18,8 +18,8 @@ function install_service() {
         cat <<EOF > "$UNIT_FILE"
 [Unit]
 Description=UPRI: Sender Backend Service
-After=docker.service
-Requires=docker.service
+After=docker.service rsh-data-producer.service
+Requires=docker.service rsh-data-producer.service
 
 [Service]
 Type=oneshot
