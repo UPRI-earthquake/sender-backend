@@ -11,7 +11,7 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 router.use(express.json())
 
-function readNetwork() {
+function read_network() {
   try {
     const network = fs.readFileSync('/opt/settings/sys/NET.txt', 'utf8');
     return network.trim();
@@ -22,7 +22,7 @@ function readNetwork() {
   return '';
 }
 
-function readStation() {
+function read_station() {
   try {
     const station = fs.readFileSync('/opt/settings/sys/STN.txt', 'utf8');
     return station.trim();
@@ -34,8 +34,8 @@ function readStation() {
 }
 // A function for getting the device streamId from rshake
 function generate_streamId() {
-  let network = readNetwork() 
-  let station = readStation() 
+  let network = read_network() 
+  let station = read_station() 
 
   return `${network}_${station}.*/MSEED` // based on RingServer streamID format
 }
