@@ -11,19 +11,33 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 router.use(express.json())
 
+function readNetwork() {
+  try {
+    const network = fs.readFileSync('/opt/settings/sys/NET.txt', 'utf8');
+    return network.trim();
+  } catch (error) {
+    // log and move on
+    console.log(error)
+  }
+  return '';
+}
+
+function readStation() {
+  try {
+    const station = fs.readFileSync('/opt/settings/sys/STN.txt', 'utf8');
+    return station.trim();
+  } catch (error) {
+    // log and move on
+    console.log(error)
+  }
+  return '';
+}
 // A function for getting the device streamId from rshake
-async function generate_streamId() {
-    let retVal = ""
-    const streamId = "AM_R3B2D_00_ENZ,AM_R3B2D_00_ENN" // mock values
+function generate_streamId() {
+  let network = readNetwork() 
+  let station = readStation() 
 
-    try {
-        // TODO: Get streamID from rshake. No parsing required here.
-        retVal = streamId
-    } catch (error) {
-        retVal = { status: 400, message: "StreamID not acquired" }
-    }
-
-    return retVal
+  return `${network}_${station}.*/MSEED` // based on RingServer streamID format
 }
 
 // Request token from auth server + save token to localDB 
@@ -89,7 +103,7 @@ router.post('/',
         }
     }, async (req, res, next) => {
         try {
-            const streamId = await generate_streamId(); //get device streamId
+            const streamId = generate_streamId(); //get device streamId
             console.log("streamId Acquired: " + streamId) //logs the streamId acquired
             const macAddress = getmac.default(); //get device mac address
             console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired
