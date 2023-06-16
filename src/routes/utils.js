@@ -26,7 +26,7 @@ function generate_streamId() {
   let network = read_network() 
   let station = read_station() 
 
-  return `${network}_${station}.*/MSEED` // based on RingServer streamID format
+  return `${network}_${station}_.*/MSEED` // based on RingServer streamID format
 }
 
 module.exports = {
