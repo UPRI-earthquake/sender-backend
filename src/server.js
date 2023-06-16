@@ -2,7 +2,6 @@
 const app = require('./app')
 const { createLocalFileStoreDir } = require('./controllers/localFileStore.controller')
 const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stream.controller')
-require('dotenv').config()
 
 // Asynchronous function for:
 // 1. creating local file store,

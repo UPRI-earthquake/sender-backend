@@ -5,7 +5,7 @@ const path = require('path');
 async function createLocalFileStoreDir() {
   try {
     // Create /localDBs/ directory
-    const localFileStoreDir = path.resolve(__dirname, '../localDBs')
+    const localFileStoreDir = process.env.LOCALDBS_DIRECTORY
     try {
       await fs.promises.access(localFileStoreDir, fs.constants.R_OK);
       console.log(`./localDBs/ folder already exists`);

@@ -7,7 +7,7 @@ let streamsObject = {};
 // Function for initializing streamsObject dictionary
 async function initializeStreamsObject() {
   try {
-    const localFileStoreDir = path.resolve(__dirname, '../localDBs');
+    const localFileStoreDir = process.env.LOCALDBS_DIRECTORY
     const jsonString = await fs.promises.readFile(`${localFileStoreDir}/servers.json`, 'utf-8');
     const serversList = JSON.parse(jsonString);
 
@@ -66,7 +66,7 @@ async function spawnSlink2dali(receiver_ringserver) {
   let childProcess = null;
 
   try {
-    const localFileStoreDir = path.resolve(__dirname, '../localDBs');
+    const localFileStoreDir = process.env.LOCALDBS_DIRECTORY
     const jsonString = await fs.promises.readFile(`${localFileStoreDir}/token.json`, 'utf-8');
     const token = JSON.parse(jsonString);
 
