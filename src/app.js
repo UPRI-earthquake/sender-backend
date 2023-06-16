@@ -14,8 +14,8 @@ const deviceRouter = require('./routes/device')
 
 // Only accept requests comming from client ip and port
  app.use(cors({origin : process.env.NODE_ENV === 'production'
-   ? `http://${process.env.CLIENT_PROD_IP}:${CLIENT_PROD_PORT}`
-   : `http://${process.env.CLIENT_DEV_IP}:${CLIENT_DEV_PORT}`
+   ? `http://${process.env.CLIENT_PROD_IP}:${process.env.CLIENT_PROD_PORT}`
+   : `http://${process.env.CLIENT_DEV_IP}:${process.env.CLIENT_DEV_PORT}`
  }))
 
 app.use(bodyParser.json())
