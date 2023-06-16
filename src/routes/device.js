@@ -3,6 +3,7 @@ const router = express.Router();
 const { spawn, exec } = require('child_process');
 const fs = require('fs')
 const bodyParser = require('body-parser')
+const { generate_streamId } = require('./utils');
 
 router.use(bodyParser.json())
 
@@ -41,8 +42,10 @@ router.route('/stream/start').post(async (req, res) => {
 
         // TODO: Add necessary options to be sent as arguments of the slink2dali (i.e. token, target ringserver etc.)
         const command = `${process.env.SLINK2DALIPATH}/slink2dali`;
-        const net_sta = 'GE_TOLI2'; // CHANGE THIS. This info should come from deviceInfo.json
-        const sender_slink2dali = 'geofon.gfz-potsdam.de:18000'; // CHANGE THIS
+        const network = read_network()
+        const station = read_station()
+        const net_sta = `${network}_${station}`; 
+        const sender_slink2dali = 'docker-host:18000';
         const receiver_ringserver = req.body.url;
         const options = ['-vvv', '-S', net_sta , sender_slink2dali, receiver_ringserver];
 
