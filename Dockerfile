@@ -24,11 +24,11 @@ RUN apk add dumb-init
 
 # install node modules
 ENV NODE_ENV production
-COPY --chown=node:node package*.json ./
+COPY package*.json ./
 RUN npm ci --only=production --loglevel=verbose
 
 # copy codebase
-COPY --chown=node:node src/ ./src/
+COPY src/ ./src/
 
 # define fixed environment variables
 ENV SLINK2DALIPATH=/app/slink2dali
@@ -39,7 +39,6 @@ ENV BACKEND_PROD_PORT=5001
 ENV NODE_ENV=production
 
 EXPOSE 5001
-USER node
 CMD ["dumb-init", "npm", "run", "start"]
 
 LABEL org.opencontainers.image.source="https://github.com/UPRI-earthquake/sender-backend"
