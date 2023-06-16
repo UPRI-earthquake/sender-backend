@@ -29,7 +29,14 @@ RUN npm ci --only=production --loglevel=verbose
 
 # copy codebase
 COPY --chown=node:node src/ ./src/
-COPY --chown=node:node .env ./
+
+# define fixed environment variables
+ENV SLINK2DALIPATH=/app/slink2dali
+ENV CLIENT_PROD_IP=rs.local
+ENV CLIENT_PROD_PORT=3000
+ENV BACKEND_PROD_IP=0.0.0.0
+ENV BACKEND_PROD_PORT=5001
+ENV NODE_ENV=production
 
 EXPOSE 5001
 USER node

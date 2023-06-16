@@ -106,14 +106,16 @@ function create_container() {
         # set domain name on which host_ip will be accessible from within container
         local in_docker_hostname="docker-host"
         # create container
+        # TODO: Change W1_PROD_IP to earthquake-hub domain /api (for production)
         docker create \
             --name "$CONTAINER" \
             --add-host $in_docker_hostname:$host_ip \
             --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \
             --volume /opt/settings:/opt/settings:ro \
             --volume UPRI-volume:/app/localDBs \
+            --env LOCALDBS_DIRECTORY=/app/localDBs \
+            --env W1_PROD_IP=10.196.16.130 \
             --net UPRI-docker-network \
-            --env SLINK2DALIPATH=/app/slink2dali
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
             # 2nd volume: contains NET and STAT info
