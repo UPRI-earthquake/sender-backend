@@ -5,7 +5,6 @@ const getmac = require('getmac')
 const axios = require('axios')
 const path = require('path');
 const { body, validationResult } = require('express-validator');
-require('dotenv').config()
 const https = require('https')
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const { generate_streamId } = require('./utils');
@@ -18,7 +17,7 @@ async function request_auth_token(username, password) {
     let retVal = null;
 
     try {
-        const filePath = path.resolve(__dirname, '../localDBs', 'token.json');
+        const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`
         let data = { accessToken: null, role: "sensor" };
 
         const tokenString = await fs.promises.readFile(filePath, 'utf-8');
@@ -109,7 +108,7 @@ router.post('/',
                     }
                 })
             
-            const deviceInfoPath = path.resolve(__dirname, '../localDBs', 'deviceInfo.json');
+            const deviceInfoPath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`
             // Save deviceInfo coming from the response from request to W1
             await fs.promises.writeFile(deviceInfoPath, JSON.stringify(response.data.payload));
 

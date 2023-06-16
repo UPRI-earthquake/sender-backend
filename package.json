@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "This repository contains the backend code for rshake device-to-account linking",
   "scripts": {
-    "test": "jest",
     "start": "node ./src/server.js",
-    "dev": "nodemon ./src/server.js"
+    "start:help": "echo 'Runs node server server.js, and expects process.env to be runtime-export-ed in the environment'",
+    "start:dev": "nodemon -r dotenv/config ./src/server.js",
+    "start:dev:help": "echo 'Runs nodemon on server.js, and expects process.env to come from an available .env file. NOTE: runtime-exported env-vars may overwrite process.env'",
+    "test": "jest --setupFiles dotenv/config",
+    "test:help": "echo 'Runs tests against Jest, and expects process.env to come from an available .env file. NOTE: runtime-exported env-vars may overwrite process.env'"
   },
   "author": "",
   "license": "ISC",

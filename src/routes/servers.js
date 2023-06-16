@@ -5,13 +5,14 @@ const path = require('path')
 const bodyParser = require('body-parser')
 const Joi = require('joi');
 const { Result } = require('express-validator');
+const { addNewStream, spawnSlink2dali } = require('../controllers/stream.controller.js')
 
 router.use(bodyParser.json())
 
 router.route('/getList').get(async (req, res) => {
   try {
     // Read the file
-    const filePath = path.resolve(__dirname, '../localDBs', 'servers.json');
+    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`
     const jsonString = await fs.promises.readFile(filePath, 'utf-8');
     const data = JSON.parse(jsonString);
     console.log(data);
@@ -28,7 +29,22 @@ const serverInputSchema = Joi.object().keys({
     url: Joi.string().uri().required()
 });
 
-router.route('/add').post(async (req, res) => {
+// Add middleware function that checks if the device is already linked to an account
+async function linkingStatusCheck(req, res, next) {
+  // Read data from token.json file
+  const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`
+  const jsonString = await fs.promises.readFile(filePath, 'utf-8');
+  const token = JSON.parse(jsonString);
+
+  if (!token.accessToken) {
+    return res.status(409).json({ message: 'Link your device first before adding a ringserver url' })
+  }
+
+  next(); // Proceed to the next middleware/route handler
+}
+
+// TODO: Add middleware function that checks if the device is already linked to an account; should not proceed adding server if not yet linked.
+router.route('/add').post( linkingStatusCheck, async (req, res) => {
     try {
         const result = serverInputSchema.validate(req.body);
         if(result.error){
@@ -38,7 +54,7 @@ router.route('/add').post(async (req, res) => {
         }
         
         // Read data from servers.json file
-        const filePath = path.resolve(__dirname, '../localDBs', 'servers.json');
+        const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`
         const jsonString = await fs.promises.readFile(filePath, 'utf-8');
         const existingServers = JSON.parse(jsonString);
     
@@ -62,7 +78,11 @@ router.route('/add').post(async (req, res) => {
     
         // Write updated array to servers.json file
         await fs.promises.writeFile(filePath, JSON.stringify(existingServers));
-    
+
+        await addNewStream(req.body.url, req.body.hostName); // add entry to streamsObject dictionary on successful add server
+        
+        await spawnSlink2dali(req.body.url); // start streaming right after adding new server
+        
         console.log("Server added succesfully")
         return res.status(200).json({ message: "Server added successfully" });
     
