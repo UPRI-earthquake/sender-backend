@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { spawn } = require('child_process');
+const { read_network, read_station } = require('../routes/utils');
 
 let streamsObject = {};
 
@@ -70,9 +71,11 @@ async function spawnSlink2dali(receiver_ringserver) {
     const jsonString = await fs.promises.readFile(`${localFileStoreDir}/token.json`, 'utf-8');
     const token = JSON.parse(jsonString);
 
-    const command = `${process.env.SLINK2DALIPATH}/slink2dali`;
-    const net_sta = 'GE_TOLI2'; // CHANGE THIS. This info should come from deviceInfo.json
-    const sender_slink2dali = 'geofon.gfz-potsdam.de:18000'; // CHANGE THIS
+    const command = `${process.env.SLINK2DALIPATH}`;
+    const network = read_network()
+    const station = read_station()
+    const net_sta = `${network}_${station}`;
+    const sender_slink2dali = 'docker-host:18000';
     const options = ['-vvv', '-a', token.accessToken, '-S', net_sta, sender_slink2dali, receiver_ringserver];
 
     childProcess = spawn(command, options); // Execute the command using spawn

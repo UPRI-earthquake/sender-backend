@@ -1,6 +1,12 @@
 # UPRI-SEISMO-rShake-backend
 This is the backend repository for linking the rShake device to an account.
 
+### Installation on a [RaspberryShake Device](https://shop.raspberryshake.org/)
+To install the entire sender software package, run the following command on the [RaspberryShake terminal](https://manual.raspberryshake.org/ssh.html):
+```bash
+bash <(curl -sSL url)
+```
+
 ### Development Setup
 #### Prerequisites
 * node

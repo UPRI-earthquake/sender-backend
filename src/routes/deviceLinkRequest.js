@@ -7,25 +7,11 @@ const path = require('path');
 const { body, validationResult } = require('express-validator');
 const https = require('https')
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+const { generate_streamId } = require('./utils');
 
 router.use(express.json())
 
-// A function for getting the device streamId from rshake
-async function generate_streamId() {
-    let retVal = ""
-    const streamId = "GE_TOLI2_.*/MSEED" // mock values
-
-    try {
-        // TODO: Get streamID from rshake. No parsing required here.
-        retVal = streamId
-    } catch (error) {
-        retVal = { status: 400, message: "StreamID not acquired" }
-    }
-
-    return retVal
-}
-
-// Request token from auth server + save token to localDB 
+// Request token from auth server + save token to localDB
 // note: Always check if there's an existing token in localDB, if none, request from auth server
 async function request_auth_token(username, password) {
     let retVal = null;
@@ -88,7 +74,7 @@ router.post('/',
         }
     }, async (req, res, next) => {
         try {
-            const streamId = await generate_streamId(); //get device streamId
+            const streamId = generate_streamId(); //get device streamId
             console.log("streamId Acquired: " + streamId) //logs the streamId acquired
             const macAddress = getmac.default(); //get device mac address
             console.log('Device Mac Address Acquired: ' + macAddress); //logs the Mac Address acquired

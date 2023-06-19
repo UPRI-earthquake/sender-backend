@@ -12,12 +12,11 @@ const serversRouter = require('./routes/servers')
 const deviceLinkRequestRouter = require('./routes/deviceLinkRequest')
 const deviceRouter = require('./routes/device')
 
-// app.use(cors())
-// Allow all request from all sources for now. TODO: restrict cross-origin requests
-app.use(cors({origin : process.env.NODE_ENV === 'production'
-  ? 'http://' + process.env.CLIENT_PROD_IP + ':' + process.env.CLIENT_PROD_PORT
-  : 'http://' + process.env.CLIENT_DEV_IP + ':' + process.env.CLIENT_DEV_PORT
-}))
+// Only accept requests comming from client ip and port
+ app.use(cors({origin : process.env.NODE_ENV === 'production'
+   ? `http://${process.env.CLIENT_PROD_IP}:${process.env.CLIENT_PROD_PORT}`
+   : `http://${process.env.CLIENT_DEV_IP}:${process.env.CLIENT_DEV_PORT}`
+ }))
 
 app.use(bodyParser.json())
 
