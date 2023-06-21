@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub
-BACKEND_URL="10.196.16.130:8000/sender-backend/sender-backend.sh"
-FRONTEND_URL="10.196.16.130:8000/sender-frontend/sender-frontend.sh"
+BACKEND_URL="192.168.1.13:9999/sender-backend/sender-backend.sh"
+FRONTEND_URL="192.168.1.13:9999/sender-frontend/sender-frontend.sh"
 
 # Install sender-backend and sender-frontend into /usr/local/bin directory
 INSTALL_DIR="/usr/local/bin"
@@ -13,11 +13,15 @@ download_and_install_script() {
 
     # Download the script
     sudo curl -sSL "$url" -o "$INSTALL_DIR/$script_name" || {
+        echo -en "[\e[1;31mFAILED\e[0m] "
         echo "Failed to download script: $script_name"
         exit 1
     }
 
     sudo chmod +x "$INSTALL_DIR/$script_name" # Make the script executable
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "$script_name successfully downloaded and installed"
+    return 0
 }
 
 # Download and install the backend script
