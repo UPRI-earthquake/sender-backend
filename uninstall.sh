@@ -20,6 +20,7 @@ sender-frontend STOP
 sender-frontend REMOVE_CONTAINER
 sender-frontend REMOVE_IMAGE
 
+sender-frontend REMOVE_VOLUME
 sender-backend REMOVE_NETWORK
 
 sender-backend UNINSTALL_SERVICE

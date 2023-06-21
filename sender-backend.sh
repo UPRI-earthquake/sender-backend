@@ -5,6 +5,7 @@ SERVICE="sender-backend.service"
 UNIT_FILE="/lib/systemd/system/$SERVICE"
 IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.2-arm32v7" #TODO: Change tag to :latest
 CONTAINER="sender-backend"
+VOLUME="UPRI-volume"
 DOCKER_NETWORK="UPRI-docker-network"
 
 ## INSTALLATION FUNCTIONS
@@ -211,6 +212,25 @@ function remove_image() {
     fi
 }
 
+function remove_volume() {
+    if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
+        docker volume rm "$VOLUME"
+        if [[ $? -eq 0 ]]; then
+            echo -en "[  \e[32mOK\e[0m  ] "
+            echo "Volume $VOLUME removed successfully."
+            return 0
+        else
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "Failed to remove volume $VOLUME."
+            return 1
+        fi
+    else
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Volume $VOLUME does not exist."
+        return 0
+    fi
+}
+
 function remove_network() {
     if docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1; then
         docker network rm "$DOCKER_NETWORK"
@@ -289,6 +309,9 @@ case $1 in
     "REMOVE_IMAGE")
         remove_image
         ;;
+    "REMOVE_VOLUME")
+        remove_volume
+        ;;
     "REMOVE_NETWORK")
         remove_network
         ;;
@@ -296,7 +319,7 @@ case $1 in
         uninstall_service
         ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|NETWORK_SETUP|PULL|CREATE|START|STOP|REMOVE_NETWORK|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|NETWORK_SETUP|PULL|CREATE|START|STOP|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE]"
         ;;
 esac
 
