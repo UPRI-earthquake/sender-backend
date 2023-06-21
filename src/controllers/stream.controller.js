@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const axios = require('axios')
 const { spawn } = require('child_process');
 const { read_network, read_station } = require('../routes/utils');
 
@@ -21,6 +22,7 @@ async function initializeStreamsObject() {
           hostName: hostName,
           childProcess: null,
           status: 'Not Streaming',
+          retryCount: 0
         };
       }
     });
@@ -42,14 +44,36 @@ async function getStreamsObject() {
   }
 }
 
-// Function for updating the status of the specified url in streamsObject dictionary
-async function updateStreamStatus(url, childProcess, status) {
+/* 
+Function for updating the status of the specified url in streamsObject dictionary
+  url: ringserver url
+  childProcess: child process object
+  retryFlag: increment retry count by 1, if true
+  resetFlag: reset retryCount to 0,if true
+*/
+async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
   if (streamsObject.hasOwnProperty(url)) {
-    streamsObject[url].status = status;
     streamsObject[url].childProcess = childProcess;
+
+    if (retryFlag) {
+      streamsObject[url].retryCount += 1;
+    }
+
+    if (resetFlag) {
+      streamsObject[url].retryCount = 0;
+    }
+    
+    // Set status based on number of spawn retries
+    if (streamsObject[url].retryCount === 0) {
+      streamsObject[url].status = 'Streaming';
+    } else if (streamsObject[url].retryCount <= 3) {
+      streamsObject[url].status = 'Connecting';
+    } else if (streamsObject[url].retryCount > 3) {
+      streamsObject[url].status = 'Error';
+    }
   }
 
-  return streamsObject;
+  return streamsObject[url];
 }
 
 
@@ -57,7 +81,8 @@ async function addNewStream(url, hostName) {
   streamsObject[url] = {
     hostName: hostName,
     childProcess: null,
-    status: 'Not Streaming'
+    status: 'Not Streaming',
+    retryFlag: 0
   };
   console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
 }
@@ -99,13 +124,28 @@ async function spawnSlink2dali(receiver_ringserver) {
 
       if (hasError) {
         // Cleanup functions: 
-        childProcess.kill(); // Terminate the child process
-        await updateStreamStatus(receiver_ringserver, null, 'Not Streaming'); // Update the status to 'Not Streaming'
+        const updatedStream = await updateStreamStatus(receiver_ringserver, null, true, false); // Increment the retryCount
+        console.log(childProcess.pid)
+        console.log(updatedStream.retryCount)
+        
+        // Respawn slink2dali with interval depending on the number of retries
+        if (updatedStream.retryCount < 3) {
+          setTimeout(async () => {
+            console.log('Respawning slink2dali...');
+            await spawnSlink2dali(receiver_ringserver);
+          }, 5000);
+        } 
+        else { // retryCount > 3
+          setTimeout(async () => {
+            console.log('Respawning slink2dali...');
+            await spawnSlink2dali(receiver_ringserver);
+          }, 10000);
+        }
       }
     });
 
     // Listen for 'stdout' event from the child process
-    childProcess.stdout.on('data', (data) => {
+    childProcess.stdout.on('data', async (data) => {
       console.log(`Command output: ${data}`); // Log output from slink2dali  
 
       // Listen for 'error' in slink2dali logs
@@ -114,6 +154,11 @@ async function spawnSlink2dali(receiver_ringserver) {
         // Set the error flag to true
         hasError = true;
       }
+      
+      // Listen for 'WRITE_OK' in slink2dali logs
+      if (data.includes('WRITE_OK')) {
+        await updateStreamStatus(receiver_ringserver, childProcess, false, true); // Reset the retryCount to 0
+      }
     });
 
     // Listen for 'stderr' event from the child process
@@ -121,7 +166,7 @@ async function spawnSlink2dali(receiver_ringserver) {
       console.error(`Command error: ${data}`);
     });
 
-    await updateStreamStatus(receiver_ringserver, childProcess, 'Streaming'); // Update the status to 'streaming'
+    await updateStreamStatus(receiver_ringserver, childProcess, false, false); // Do not increment the retryFlag count
     console.log('Child process spawned successfully');
   } catch (error) {
     console.error(`Error spawning slink2dali: ${error}`);
