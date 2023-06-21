@@ -129,17 +129,17 @@ async function spawnSlink2dali(receiver_ringserver) {
         console.log(updatedStream.retryCount)
         
         // Respawn slink2dali with interval depending on the number of retries
-        if (updatedStream.retryCount < 3) {
+        if (updatedStream.retryCount <= 3) {
           setTimeout(async () => {
             console.log('Respawning slink2dali...');
             await spawnSlink2dali(receiver_ringserver);
-          }, 5000);
+          }, 30000); // Set 30-second-timeout if retryCount is less than or equal to 3 
         } 
         else { // retryCount > 3
           setTimeout(async () => {
             console.log('Respawning slink2dali...');
             await spawnSlink2dali(receiver_ringserver);
-          }, 10000);
+          }, 300000); // Set 5-minute-timeout if retryCount is more than to 3
         }
       }
     });
