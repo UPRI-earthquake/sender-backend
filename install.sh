@@ -24,6 +24,22 @@ download_and_install_script() {
     return 0
 }
 
+# Prompt for rebooting the device
+prompt_reboot() {
+    read -rp "Reboot rshake device to apply the changes? (y/n): " choice
+    case "$choice" in
+        y|Y|yes|YES)
+            sudo reboot
+            ;;
+        n|N|no|NO)
+            echo "No reboot requested. Changes will not take effect until the device is rebooted."
+            ;;
+        *)
+            echo "Invalid choice. No reboot requested. Changes will not take effect until the device is rebooted."
+            ;;
+    esac
+}
+
 # Download and install the backend script
 download_and_install_script "$BACKEND_URL" "sender-backend"
 
@@ -47,24 +63,6 @@ sudo sender-frontend INSTALL_SERVICE  || {
     exit 1
 }
 
-# start services
-if ! systemctl is-active --quiet sender-backend.service; then
-    sudo systemctl start sender-backend.service || {
-        echo "Error in starting sender-backend service. Aborting."
-        exit 1
-    }
-    echo "sender-backend service started successfully."
-else
-    echo "sender-backend service is already running."
-fi
-
-if ! systemctl is-active --quiet sender-frontend.service; then
-    sudo systemctl start sender-frontend.service || {
-        echo "Error in starting sender-frontend service. Aborting."
-        exit 1
-    }
-    echo "sender-frontend service started successfully."
-else
-    echo "sender-frontend service is already running."
-fi
+# Prompt for reboot to start the new services
+prompt_reboot
 
