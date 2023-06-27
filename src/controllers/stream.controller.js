@@ -155,8 +155,8 @@ async function spawnSlink2dali(receiver_ringserver) {
         hasError = true;
       }
       
-      // Listen for 'WRITE_OK' in slink2dali logs
-      if (data.includes('WRITE_OK')) {
+      // Listen for 'WRITE_SUCCESS' in slink2dali logs
+      if (data.includes('WRITE_SUCCESS')) {
         await updateStreamStatus(receiver_ringserver, childProcess, false, true); // Reset the retryCount to 0
       }
     });
