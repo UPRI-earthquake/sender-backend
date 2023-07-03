@@ -133,13 +133,13 @@ async function spawnSlink2dali(receiver_ringserver) {
           setTimeout(async () => {
             console.log('Respawning slink2dali...');
             await spawnSlink2dali(receiver_ringserver);
-          }, 30000); // Set 30-second-timeout if retryCount is less than or equal to 3 
+          }, 1000*30); // Set 30-second-timeout (time is in milliseconds) if retryCount is less than or equal to 3 
         } 
         else { // retryCount > 3
           setTimeout(async () => {
             console.log('Respawning slink2dali...');
             await spawnSlink2dali(receiver_ringserver);
-          }, 300000); // Set 5-minute-timeout if retryCount is more than to 3
+          }, 1000*60*2); // Set 2-minute-timeout (time is in milliseconds) if retryCount is more than to 3
         }
       }
     });
