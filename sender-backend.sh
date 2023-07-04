@@ -3,8 +3,9 @@
 # Constants
 SERVICE="sender-backend.service"
 UNIT_FILE="/lib/systemd/system/$SERVICE"
-IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.2-arm32v7" #TODO: Change tag to :latest
+IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.3-arm32v7" #TODO: Change tag to :latest
 CONTAINER="sender-backend"
+VOLUME="UPRI-volume"
 DOCKER_NETWORK="UPRI-docker-network"
 
 ## INSTALLATION FUNCTIONS
@@ -19,8 +20,8 @@ function install_service() {
         cat <<EOF > "$UNIT_FILE"
 [Unit]
 Description=UPRI: Sender Backend Service
-After=docker.service rsh-data-producer.service
-Requires=docker.service rsh-data-producer.service
+After=docker.service raspberryshake.service
+Requires=docker.service raspberryshake.service
 
 [Service]
 Type=oneshot
@@ -114,7 +115,7 @@ function create_container() {
             --volume /opt/settings:/opt/settings:ro \
             --volume UPRI-volume:/app/localDBs \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
-            --env W1_PROD_IP=10.196.16.149/api \
+            --env W1_PROD_IP=10.196.16.141/api \
             --net UPRI-docker-network \
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
@@ -211,6 +212,25 @@ function remove_image() {
     fi
 }
 
+function remove_volume() {
+    if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
+        docker volume rm "$VOLUME"
+        if [[ $? -eq 0 ]]; then
+            echo -en "[  \e[32mOK\e[0m  ] "
+            echo "Volume $VOLUME removed successfully."
+            return 0
+        else
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "Failed to remove volume $VOLUME."
+            return 1
+        fi
+    else
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Volume $VOLUME does not exist."
+        return 0
+    fi
+}
+
 function remove_network() {
     if docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1; then
         docker network rm "$DOCKER_NETWORK"
@@ -289,6 +309,9 @@ case $1 in
     "REMOVE_IMAGE")
         remove_image
         ;;
+    "REMOVE_VOLUME")
+        remove_volume
+        ;;
     "REMOVE_NETWORK")
         remove_network
         ;;
@@ -296,7 +319,7 @@ case $1 in
         uninstall_service
         ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|NETWORK_SETUP|PULL|CREATE|START|STOP|REMOVE_NETWORK|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|NETWORK_SETUP|PULL|CREATE|START|STOP|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE]"
         ;;
 esac
 

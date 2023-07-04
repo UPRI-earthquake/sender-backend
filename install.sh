@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub
-BACKEND_URL="10.196.16.130:8000/sender-backend/sender-backend.sh"
-FRONTEND_URL="10.196.16.130:8000/sender-frontend/sender-frontend.sh"
+BACKEND_URL="192.168.1.13:9999/sender-backend/sender-backend.sh"
+FRONTEND_URL="192.168.1.13:9999/sender-frontend/sender-frontend.sh"
 
 # Install sender-backend and sender-frontend into /usr/local/bin directory
 INSTALL_DIR="/usr/local/bin"
@@ -13,11 +13,31 @@ download_and_install_script() {
 
     # Download the script
     sudo curl -sSL "$url" -o "$INSTALL_DIR/$script_name" || {
+        echo -en "[\e[1;31mFAILED\e[0m] "
         echo "Failed to download script: $script_name"
         exit 1
     }
 
     sudo chmod +x "$INSTALL_DIR/$script_name" # Make the script executable
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "$script_name successfully downloaded and installed"
+    return 0
+}
+
+# Prompt for rebooting the device
+prompt_reboot() {
+    read -rp "Reboot rshake device to apply the changes? (y/n): " choice
+    case "$choice" in
+        y|Y|yes|YES)
+            sudo reboot
+            ;;
+        n|N|no|NO)
+            echo "No reboot requested. Changes will not take effect until the device is rebooted."
+            ;;
+        *)
+            echo "Invalid choice. No reboot requested. Changes will not take effect until the device is rebooted."
+            ;;
+    esac
 }
 
 # Download and install the backend script
@@ -43,24 +63,6 @@ sudo sender-frontend INSTALL_SERVICE  || {
     exit 1
 }
 
-# start services
-if ! systemctl is-active --quiet sender-backend.service; then
-    sudo systemctl start sender-backend.service || {
-        echo "Error in starting sender-backend service. Aborting."
-        exit 1
-    }
-    echo "sender-backend service started successfully."
-else
-    echo "sender-backend service is already running."
-fi
-
-if ! systemctl is-active --quiet sender-frontend.service; then
-    sudo systemctl start sender-frontend.service || {
-        echo "Error in starting sender-frontend service. Aborting."
-        exit 1
-    }
-    echo "sender-frontend service started successfully."
-else
-    echo "sender-frontend service is already running."
-fi
+# Prompt for reboot to start the new services
+prompt_reboot
 

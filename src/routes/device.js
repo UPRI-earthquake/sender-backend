@@ -39,7 +39,7 @@ router.route('/stream/start').post(async (req, res, next) => {
   next();
 }, streamStatusCheck,
   async (req, res) => {
-    console.log('POST Request sent on /device/test endpoint')
+    console.log('POST Request sent on /stream/start endpoint')
 
     try {
       await spawnSlink2dali(req.body.url);
@@ -59,8 +59,8 @@ router.route('/stream/status').get(async (req, res) => {
 
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
-      const { status, hostName } = streamsObject[url];
-      outputObject[url] = { status, hostName };
+      const { status, hostName, retryCount } = streamsObject[url];
+      outputObject[url] = { status, hostName, retryCount };
     }
   }
 

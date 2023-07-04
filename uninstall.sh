@@ -3,10 +3,12 @@ INSTALL_DIR="/usr/local/bin"
 
 # Check if sender-scripts exist in INSTALL_DIR
 if [[ ! -f "$INSTALL_DIR/sender-backend" ]]; then
+    echo -en "[\e[1;31mFAILED\e[0m] "
     echo "sender-backend script does not exist in $INSTALL_DIR"
     exit 1
 fi
 if [[ ! -f "$INSTALL_DIR/sender-frontend" ]]; then
+    echo -en "[\e[1;31mFAILED\e[0m] "
     echo "sender-frontend script does not exist in $INSTALL_DIR"
     exit 1
 fi
@@ -20,6 +22,7 @@ sender-frontend STOP
 sender-frontend REMOVE_CONTAINER
 sender-frontend REMOVE_IMAGE
 
+sender-backend REMOVE_VOLUME
 sender-backend REMOVE_NETWORK
 
 sender-backend UNINSTALL_SERVICE
@@ -31,9 +34,11 @@ sudo rm -f /usr/local/bin/sender-frontend
 
 # Check if sender-backend and sender-frontend scripts are removed
 if [[ -f "$INSTALL_DIR/sender-backend" || -f "$INSTALL_DIR/sender-frontend" ]]; then
+    echo -en "[\e[1;31mFAILED\e[0m] "
     echo "Failed to remove one or both sender scripts from $INSTALL_DIR"
     exit 1
 else
+    echo -en "[  \e[32mOK\e[0m  ] "
     echo "Both sender-backend and sender-frontend scripts successfully removed from $INSTALL_DIR"
     exit 0
 fi
