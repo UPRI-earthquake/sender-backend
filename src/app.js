@@ -1,8 +1,27 @@
 const express = require('express')
 const cors = require('cors')
 const bodyParser = require('body-parser')
+const swaggerJsDoc = require('swagger-jsdoc')
+const swaggerUi = require('swagger-ui-express')
 
 const app = express()
+
+const options = {
+  swaggerDefinition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'rShake APIs',
+      version: '1.0.0',
+      description: 'These are the API endpoints used for rshake-backend',
+    },
+  },
+  apis: ['./routes/*.js'], // Path to the API routes in your project
+};
+
+const specs = swaggerJsDoc(options);
+
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+
 const port = process.env.NODE_ENV === 'production'
              ? process.env.BACKEND_PROD_PORT
              : process.env.BACKEND_DEV_PORT;
