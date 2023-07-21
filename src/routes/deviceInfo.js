@@ -6,6 +6,20 @@ const bodyParser = require('body-parser')
 
 router.use(bodyParser.json())
 
+
+/**
+ * @swagger
+ * /deviceInfo:
+ *   get:
+ *     summary: Endpoint for reading device information from a JSON file
+ *     tags:
+ *       - Device
+ *     responses:
+ *       200:
+ *         description: Successful response with device information
+ *       500:
+ *         description: Internal server error
+ */
 router.get('/', async (req, res) => {
   try {
     const filePath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`
