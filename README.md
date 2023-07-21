@@ -18,6 +18,12 @@ bash <(curl -sSL url)
 * *cors*              
 * *body-parser*     
 
+#### Building the docker image
+1. In the terminal, run `docker buildx build --platform linux/arm/v7 -t sender-backend:dev .`
+
+#### Running the docker container
+1. In the terminal, run `docker run --platform linux/arm/v7 --env-file .env sender-backend:dev`
+
 #### Setting Up
 1. Clone this repository.
 2. Create .env from .env.example.
