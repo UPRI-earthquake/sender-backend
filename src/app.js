@@ -15,7 +15,7 @@ const options = {
       description: 'These are the API endpoints used for rshake-backend',
     },
   },
-  apis: ['./routes/*.js'], // Path to the API routes in your project
+  apis: ['./src/routes/*.js'], // Path to the API routes
 };
 
 const specs = swaggerJsDoc(options);
