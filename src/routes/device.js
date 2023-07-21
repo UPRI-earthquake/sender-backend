@@ -7,6 +7,20 @@ const { getStreamsObject, spawnSlink2dali } = require('../controllers/stream.con
 
 router.use(bodyParser.json())
 
+
+/**
+ * @swagger
+ * /device/stream/start:
+ *   post:
+ *     summary: Endpoint to start slink2dali streaming to specified servers in the local file store
+ *     tags:
+ *       - Device
+ *     responses:
+ *       200:
+ *         description: Successful spawning of slink2dali
+ *       500:
+ *         description: Internal server error
+ */
 let streamsObject = {};
 
 // A function that returns streamsObject
@@ -50,7 +64,19 @@ router.route('/stream/start').post(async (req, res, next) => {
     }
   })
 
-
+/**
+ * @swagger
+ * /device/stream/status:
+ *   get:
+ *     summary: Endpoint for getting streaming status to each server
+ *     tags:
+ *       - Device
+ *     responses:
+ *       200:
+ *         description: Successful response
+ *       500:
+ *         description: Internal server error
+ */
 router.route('/stream/status').get(async (req, res) => {
   console.log('GET Request sent on /stream/status endpoint')
   streamsObject = await populateStreamsObject();
