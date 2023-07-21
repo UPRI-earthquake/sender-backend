@@ -9,6 +9,19 @@ const { addNewStream, spawnSlink2dali } = require('../controllers/stream.control
 
 router.use(bodyParser.json())
 
+/**
+ * @swagger
+ * /servers/getList:
+ *   get:
+ *     summary: Endpoint for getting the list of servers saved in a JSON file
+ *     tags:
+ *       - Servers
+ *     responses:
+ *       200:
+ *         description: Successful response with array of ringservers
+ *       500:
+ *         description: Internal server error
+ */
 router.route('/getList').get(async (req, res) => {
   try {
     // Read the file
@@ -23,6 +36,39 @@ router.route('/getList').get(async (req, res) => {
   }
 });
 
+
+/**
+ * @swagger
+ * /servers/add:
+ *   post:
+ *     summary: Endpoint for adding a ringserver to the list
+ *     tags:
+ *       - Servers
+ *     requestBody:
+ *       description: Supplied here is a valid ringserver url
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               url:
+ *                 type: string
+ *                 description: Ringserver URL (must be a valid url format)
+ *               hostName:
+ *                 type: string
+ *                 description: Ringserver's alias
+ *             example:
+ *               url: https://earthquake.science.upd.edu.ph
+ *               hostName: UPRI's Ringserver
+ *     responses:
+ *       200:
+ *         description: Successful response with array of ringservers
+ *       409:
+ *         description: Error - Device is not yet linked
+ *       500:
+ *         description: Internal server error
+ */
 
 const serverInputSchema = Joi.object().keys({
     hostName: Joi.string().required(),
