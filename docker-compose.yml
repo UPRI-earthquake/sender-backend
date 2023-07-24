@@ -1,0 +1,32 @@
+version: '3.9'
+
+services:
+  backend:
+    container_name: sender-backend-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: "base" # select dockerfile stage to use
+    platform: linux/arm/v7
+    image: "sender-backend:dev0.0.1"
+    volumes:
+      # bind local dir to reflect changes in container
+      # NOTE: includes everything, including all those in .dockerignore, specifically .env
+      - ./:/app
+      # Bind mount the host's /dev directory to the container's /opt/settings/sys/
+      - ./dev:/opt/settings/sys
+    expose:
+      - "5001"
+    environment: # load env vars
+      CLIENT_DEV_IP: 0.0.0.0
+      CLIENT_DEV_PORT: 3000
+      BACKEND_DEV_IP: 0.0.0.0
+      BACKEND_DEV_PORT: 5001
+      NODE_ENV: development
+    # set command to only install node_modules if not present, then startDev
+    command: npm run start:dev
+    extra_hosts:
+       - "host.docker.internal:host-gateway"
+    ports:
+      - "5001:5001" # Map host port 5001 to container port 5001
+
