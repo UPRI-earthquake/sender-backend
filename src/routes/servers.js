@@ -6,6 +6,8 @@ const bodyParser = require('body-parser')
 const Joi = require('joi');
 const { Result } = require('express-validator');
 const { addNewStream, spawnSlink2dali } = require('../controllers/stream.controller.js')
+const serversController = require('../controllers/servers.controller')
+
 
 router.use(bodyParser.json())
 
@@ -22,19 +24,7 @@ router.use(bodyParser.json())
  *       500:
  *         description: Internal server error
  */
-router.route('/getList').get(async (req, res) => {
-  try {
-    // Read the file
-    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`
-    const jsonString = await fs.promises.readFile(filePath, 'utf-8');
-    const data = JSON.parse(jsonString);
-    console.log(data);
-    res.status(200).json(data);
-  } catch (err) {
-    console.error(`Error reading servers.js: ${err}`);
-    res.status(500).json({ message: 'Error getting servers list' });
-  }
-});
+router.get('/getList', serversController.getServersList);
 
 
 /**
