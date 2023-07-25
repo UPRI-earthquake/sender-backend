@@ -4,7 +4,7 @@ const fs = require('fs')
 const getmac = require('getmac')
 const axios = require('axios')
 const path = require('path');
-const { body, validationResult } = require('express-validator');
+const Joi = require('joi');
 const https = require('https')
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const { generate_streamId } = require('./utils');
@@ -90,24 +90,21 @@ async function request_auth_token(username, password) {
     return retVal;
 }
 
+const accountValidationSchema = Joi.object().keys({
+  username: Joi.string().required(),
+  password: Joi.string().pattern(new RegExp('^[a-zA-Z0-9]{6,30}$')).required()
+});
+
 /* POST deviceLinkRequest endpoint */
-router.post('/',
-    body('username').not().isEmpty().trim().escape()
-        .withMessage('Username Field Cannot be Empty'),
-    body('password').not().isEmpty().trim().escape()
-        .withMessage('Password Field Cannot be Empty'),
-    body('notifyOnReply').toBoolean(),
-    (req, res, next) => {
-        // Finds the validation errors in this request and wraps them in an object with handy functions
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            res.status(400).json({ validationErrors: errors.array() }); //returns the error message in an array format
-        } else {
-            console.log('POST request received on /deviceLinkRequest endpoint')
-            next()
-        }
-    }, async (req, res, next) => {
+router.post('/', async (req, res, next) => {
         try {
+            // Validate input
+            const result = accountValidationSchema.validate(req.body);
+            if(result.error){
+                console.log(result.error.details[0].message)
+                return res.status(400).json({ status: 400, message: result.error.details[0].message });
+            }
+
             const streamId = generate_streamId(); //get device streamId
             console.log("streamId Acquired: " + streamId) //logs the streamId acquired
             const macAddress = getmac.default(); //get device mac address
