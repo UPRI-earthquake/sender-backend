@@ -1,6 +1,6 @@
 const fs = require('fs').promises;
 const Joi = require('joi');
-const { addNewStream, spawnSlink2dali } = require('./stream.controller')
+const streamController = require('./stream.controller')
 
 async function getServersList(req, res) {
   try {
@@ -47,8 +47,8 @@ async function addServer(req, res) {
     existingServers.push(newServer);
     await fs.writeFile(filePath, JSON.stringify(existingServers)); // Write the input server to the array of servers in a json file (servers.json)
 
-    await addNewStream(req.body.url, req.body.hostName); // A function from stream.controller which adds the newly added server to streams object dictionary
-    await spawnSlink2dali(req.body.url); // Another function from stream.controller which spawns slink2dali childprocess that starts streaming to the specified ringserver
+    await streamController.addNewStream(req.body.url, req.body.hostName); // A function from stream.controller which adds the newly added server to streams object dictionary
+    await streamController.spawnSlink2dali(req.body.url); // Another function from stream.controller which spawns slink2dali childprocess that starts streaming to the specified ringserver
 
     console.log("Server added successfully");
     return res.status(200).json({ status: 200, message: "Server added successfully" });
