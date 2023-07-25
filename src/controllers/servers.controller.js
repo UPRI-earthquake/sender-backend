@@ -12,7 +12,7 @@ async function getServersList(req, res) {
     res.status(200).json(data);
   } catch (err) {
     console.error(`Error reading servers.js: ${err}`);
-    res.status(500).json({ message: 'Error getting servers list' });
+    res.status(500).json({ status: 500, message: 'Error getting servers list' });
   }
 }
 
