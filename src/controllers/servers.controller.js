@@ -51,10 +51,10 @@ async function addServer(req, res) {
     await spawnSlink2dali(req.body.url); // Another function from stream.controller which spawns slink2dali childprocess that starts streaming to the specified ringserver
 
     console.log("Server added successfully");
-    return res.status(200).json({ message: "Server added successfully" });
+    return res.status(200).json({ status: 200, message: "Server added successfully" });
   } catch (e) {
     console.log(`Error: ${e}`);
-    return res.status(400).json({ message: "Error occurred" });
+    return res.status(400).json({ status: 400, message: "Error occurred" });
   }
 }
 
