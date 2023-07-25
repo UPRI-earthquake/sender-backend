@@ -16,11 +16,27 @@ async function getServersList(req, res) {
   }
 }
 
+
 const serverInputSchema = Joi.object().keys({
   hostName: Joi.string().required(),
   url: Joi.string().required(),
 });
 
+// Middleware function that checks if the device is already linked to an account
+async function linkingStatusCheck(req, res, next) {
+  // Read data from token.json file
+  const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`
+  const jsonString = await fs.readFile(filePath, 'utf-8');
+  const token = JSON.parse(jsonString);
+
+  if (!token.accessToken) {
+    return res.status(409).json({ status: 409, message: 'Link your device first before adding a ringserver url' })
+  }
+
+  next(); // Proceed to the next middleware/route handler
+}
+
+// Function for adding server to json array, adding server to streams object dictionary, and spawning childprocess
 async function addServer(req, res) {
   try {
     const result = serverInputSchema.validate(req.body);
@@ -35,7 +51,7 @@ async function addServer(req, res) {
 
     const duplicate = existingServers.find((item) => item.url === req.body.url);
     if (duplicate) {
-      return res.status(400).json({ message: "Server URL already saved" });
+      return res.status(400).json({ status: 400, message: "Server URL already saved" });
     }
 
     const newServer = {
@@ -58,4 +74,4 @@ async function addServer(req, res) {
   }
 }
 
-module.exports = { getServersList, addServer };
+module.exports = { getServersList, addServer, linkingStatusCheck };

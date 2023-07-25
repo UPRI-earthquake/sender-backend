@@ -58,28 +58,8 @@ router.get('/getList', serverController.getServersList);
  *       500:
  *         description: Internal server error
  */
-
-const serverInputSchema = Joi.object().keys({
-    hostName: Joi.string().required(),
-    url: Joi.string().required()
-});
-
-// Middleware function that checks if the device is already linked to an account
-async function linkingStatusCheck(req, res, next) {
-  // Read data from token.json file
-  const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`
-  const jsonString = await fs.promises.readFile(filePath, 'utf-8');
-  const token = JSON.parse(jsonString);
-
-  if (!token.accessToken) {
-    return res.status(409).json({ message: 'Link your device first before adding a ringserver url' })
-  }
-
-  next(); // Proceed to the next middleware/route handler
-}
-
 router.post('/add', 
-  linkingStatusCheck, // Middleware function
+  serverController.linkingStatusCheck, // Middleware function
   serverController.addServer)
 
 module.exports = router;
