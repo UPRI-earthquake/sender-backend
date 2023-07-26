@@ -27,7 +27,7 @@ const port = process.env.NODE_ENV === 'production'
              : process.env.BACKEND_DEV_PORT;
 
 const deviceRouter = require('./routes/device.route')
-const serversRouter = require('./routes/servers')
+const serversRouter = require('./routes/servers.route')
 const streamRouter = require('./routes/stream.route')
 
 // Only accept requests comming from client ip and port

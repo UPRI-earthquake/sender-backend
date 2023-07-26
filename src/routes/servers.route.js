@@ -1,10 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs')
-const path = require('path')
 const bodyParser = require('body-parser')
-const Joi = require('joi');
-const { Result } = require('express-validator');
 const serverController = require('../controllers/servers.controller.js')
 
 
