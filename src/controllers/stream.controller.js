@@ -2,7 +2,7 @@ const fs = require('fs')
 const path = require('path')
 const axios = require('axios')
 const { spawn } = require('child_process');
-const { read_network, read_station } = require('../routes/utils');
+const { read_network, read_station } = require('../services/utils');
 
 let streamsObject = {};
 
@@ -125,8 +125,8 @@ async function spawnSlink2dali(receiver_ringserver) {
       if (hasError) {
         // Cleanup functions: 
         const updatedStream = await updateStreamStatus(receiver_ringserver, null, true, false); // Increment the retryCount
-        console.log(childProcess.pid)
-        console.log(updatedStream.retryCount)
+        console.log(`pid: ${childProcess.pid}`)
+        console.log(`retryCount: ${updatedStream.retryCount}`)
         
         // Respawn slink2dali with interval depending on the number of retries
         if (updatedStream.retryCount <= 3) {
