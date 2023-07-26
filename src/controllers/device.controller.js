@@ -4,16 +4,6 @@ const streamController = require('./stream.controller')
 
 let streamsObject = {};
 
-// A function that returns streamsObject
-async function populateStreamsObject() {
-  try {
-    streamsObject = await streamController.getStreamsObject();
-    return streamsObject;
-  } catch (error) {
-    console.error(`Error getting streamsObject Dictionary: ${error}`);
-  }
-}
-
 // Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.
 async function streamStatusCheck(req, res, next) {
   await streamController.getStreamsObject();
