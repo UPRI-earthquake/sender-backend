@@ -7,7 +7,7 @@ router.use(bodyParser.json())
 
 /**
  * @swagger
- * /device/stream/start:
+ * /stream/start:
  *   post:
  *     summary: Endpoint to start slink2dali streaming to specified servers in the local file store
  *     tags:
@@ -25,7 +25,7 @@ router.post('/start',
 
 /**
  * @swagger
- * /device/stream/status:
+ * /stream/status:
  *   get:
  *     summary: Endpoint for getting streaming status to each server
  *     tags:

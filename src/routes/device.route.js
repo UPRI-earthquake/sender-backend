@@ -8,7 +8,7 @@ router.use(bodyParser.json())
 
 /**
  * @swagger
- * /deviceInfo:
+ * /device/info:
  *   get:
  *     summary: Endpoint for reading device information from a JSON file
  *     tags:
@@ -24,7 +24,7 @@ router.get('/info', deviceController.getDeviceInfo);
 
 /** 
  * @swagger
- * /deviceLinkRequest:
+ * /device/link:
  *   post:
  *     summary: Endpoint for linking the device to a registered account in earthquake-hub network (this endpoint is dependent to earthquake-hub-backend, meaning to test this endpoint make sure that ehub-backend container is up)
  *     tags:
