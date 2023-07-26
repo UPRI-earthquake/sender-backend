@@ -1,4 +1,3 @@
-const fs = require('fs').promises;
 const streamController = require('./stream.controller')
 
 

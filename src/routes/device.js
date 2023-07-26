@@ -1,9 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs')
-const path = require('path')
 const bodyParser = require('body-parser')
-const { getStreamsObject, spawnSlink2dali } = require('../controllers/stream.controller');
 const deviceController = require('../controllers/device.controller')
 
 router.use(bodyParser.json())
