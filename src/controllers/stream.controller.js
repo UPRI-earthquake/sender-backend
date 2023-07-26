@@ -100,7 +100,7 @@ async function spawnSlink2dali(receiver_ringserver) {
     const network = read_network()
     const station = read_station()
     const net_sta = `${network}_${station}`;
-    const sender_slink2dali = 'docker-host:18000';
+    const sender_slink2dali = 'docker-host:18000'; // TODO: On development environment, this should be changed
     const options = ['-vvv', '-a', token.accessToken, '-S', net_sta, sender_slink2dali, receiver_ringserver];
 
     childProcess = spawn(command, options); // Execute the command using spawn
