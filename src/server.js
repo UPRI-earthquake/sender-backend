@@ -1,7 +1,7 @@
 // import app from './app'
 const app = require('./app')
 const { createLocalFileStoreDir } = require('./controllers/localFileStore.controller')
-const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stream.controller')
+const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stream.utils')
 
 // Asynchronous function for:
 // 1. creating local file store,
