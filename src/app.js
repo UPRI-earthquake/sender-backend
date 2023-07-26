@@ -26,9 +26,8 @@ const port = process.env.NODE_ENV === 'production'
              ? process.env.BACKEND_PROD_PORT
              : process.env.BACKEND_DEV_PORT;
 
-const deviceInfoRouter = require('./routes/deviceInfo')
+const deviceRouter = require('./routes/device.route')
 const serversRouter = require('./routes/servers')
-const deviceLinkRequestRouter = require('./routes/deviceLinkRequest')
 const streamRouter = require('./routes/stream.route')
 
 // Only accept requests comming from client ip and port
@@ -39,9 +38,8 @@ const streamRouter = require('./routes/stream.route')
 
 app.use(bodyParser.json())
 
-app.use('/deviceInfo', deviceInfoRouter)
+app.use('/device', deviceRouter)
 app.use('/servers', serversRouter)
-app.use('/deviceLinkRequest', deviceLinkRequestRouter)
 app.use('/stream', streamRouter)
 
 /* Error handler middleware */

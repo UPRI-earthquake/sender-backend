@@ -1,50 +1,80 @@
-const streamController = require('./stream.controller')
+const fs = require('fs').promises;
+const deviceService = require('../services/device.service')
+const Joi = require('joi')
 
 
-let streamsObject = {};
-
-// Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.
-async function streamStatusCheck(req, res, next) {
-  await streamController.getStreamsObject();
-
-  const url = req.body.url;
-  if (!streamsObject.hasOwnProperty(url)) {
-    return res.status(409).json({ message: 'Ringserver URL is invalid' })
-  }
-
-  if (streamsObject[url].status === 'Streaming') {
-    return res.status(409).json({ message: `Device is already streaming to ${url}` })
-  }
-
-  next(); // Proceed to the next middleware/route handler
-}
-
-async function startStreaming(req, res) {
-  console.log('POST Request sent on /stream/start endpoint')
-
+async function getDeviceInfo(req, res) {
   try {
-    await spawnSlink2dali(req.body.url);
-    res.status(200).json({ message: 'Child Process Spawned Successfully' });
+    const filePath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`;
+    const defaultDeviceInfo = {
+      network: null,
+      station: null,
+      location: null,
+      channel: null,
+      elevation: null,
+      streamId: null,
+    };
+
+    let data = { deviceInfo: defaultDeviceInfo };
+
+    const jsonString = await fs.readFile(filePath, 'utf-8');
+    data = JSON.parse(jsonString);
+
+    console.log(data.deviceInfo);
+    res.status(200).json(data.deviceInfo);
   } catch (error) {
-    console.log(`Error spawning slink2dali: ${error}`)
-    res.status(500).json({ error: 'Error spawning child process' });
+    console.error(`Error reading file: ${error}`);
+    res.status(500).json({ message: 'Error reading file' });
   }
 }
 
-async function getStreamingStatus(req, res) {
-  console.log('GET Request sent on /stream/status endpoint')
-  streamsObject = await streamController.getStreamsObject();
 
-  const outputObject = {};
+const accountValidationSchema = Joi.object({
+  username: Joi.string().required(),
+  password: Joi.string().pattern(new RegExp('^[a-zA-Z0-9]{6,30}$')).required(),
+});
 
-  for (const url in streamsObject) {
-    if (streamsObject.hasOwnProperty(url)) {
-      const { status, hostName, retryCount } = streamsObject[url];
-      outputObject[url] = { status, hostName, retryCount };
+async function linkDevice(req, res) {
+  try {
+    // Validate input
+    const { error } = accountValidationSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ status: 400, message: error.details[0].message });
+    }
+
+    let token = await deviceService.checkAuthToken(); // Check auth token from file
+    if (!token) {
+      token = await deviceService.requestAuthToken(req.body.username, req.body.password) // Request accessToken in ehub-backend
+    }
+
+    // Link the device and get device information
+    const deviceInfo = await deviceService.requestLinking(token);
+    const deviceInfoPath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`;
+    await fs.writeFile(deviceInfoPath, JSON.stringify(deviceInfo));
+
+    return res.status(200).json({
+      status: 200,
+      message: 'Successfully Requested Linking to W1',
+    });
+  } catch (error) {
+    // TODO: Add clean-up function that restores local file stores if an error is encountered while linking
+    if (error.response) {
+      return res.status(error.response.status).json({
+        status: error.response.status,
+        message: "Error from earthquake-hub: " + error.response.data.message,
+      });
+    } else {
+      console.log(error)
+      return res.status(500).json({
+        status: 500,
+        message: error
+      });
     }
   }
+};
 
-  res.status(200).json({ message: 'Get Streams Status Success', payload: outputObject })
-}
 
-module.exports = { getStreamingStatus, streamStatusCheck, startStreaming };
+module.exports = { 
+  getDeviceInfo, 
+  linkDevice,
+};
