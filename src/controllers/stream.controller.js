@@ -1,6 +1,4 @@
 const fs = require('fs')
-const path = require('path')
-const axios = require('axios')
 const { spawn } = require('child_process');
 const { read_network, read_station } = require('../services/utils');
 
