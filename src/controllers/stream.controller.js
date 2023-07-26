@@ -81,8 +81,8 @@ async function addNewStream(url, hostName) {
   streamsObject[url] = {
     hostName: hostName,
     childProcess: null,
-    status: 'Not Streaming',
-    retryFlag: 0
+    status: 'Connecting',
+    retryCount: 0
   };
   console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
 }
@@ -166,7 +166,6 @@ async function spawnSlink2dali(receiver_ringserver) {
       console.error(`Command error: ${data}`);
     });
 
-    await updateStreamStatus(receiver_ringserver, childProcess, false, false); // Do not increment the retryFlag count
     console.log('Child process spawned successfully');
   } catch (error) {
     console.error(`Error spawning slink2dali: ${error}`);
