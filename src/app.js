@@ -29,7 +29,7 @@ const port = process.env.NODE_ENV === 'production'
 const deviceInfoRouter = require('./routes/deviceInfo')
 const serversRouter = require('./routes/servers')
 const deviceLinkRequestRouter = require('./routes/deviceLinkRequest')
-const deviceRouter = require('./routes/device')
+const streamRouter = require('./routes/stream.route')
 
 // Only accept requests comming from client ip and port
  app.use(cors({origin : process.env.NODE_ENV === 'production'
@@ -42,7 +42,7 @@ app.use(bodyParser.json())
 app.use('/deviceInfo', deviceInfoRouter)
 app.use('/servers', serversRouter)
 app.use('/deviceLinkRequest', deviceLinkRequestRouter)
-app.use('/device', deviceRouter)
+app.use('/stream', streamRouter)
 
 /* Error handler middleware */
 app.use((err, req, res, next) => {
