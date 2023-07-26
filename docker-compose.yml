@@ -6,15 +6,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: "base" # select dockerfile stage to use
+      target: "build-env" # select dockerfile stage to use
     platform: linux/arm/v7
     image: "sender-backend:dev0.0.1"
     volumes:
       # bind local dir to reflect changes in container
       # NOTE: includes everything, including all those in .dockerignore, specifically .env
-      - ./:/app
+      - ./:/app/dev
       # Bind mount the host's /dev directory to the container's /opt/settings/sys/
       - ./dev:/opt/settings/sys
+      - localDBs:/app/localDBs
     expose:
       - "5001"
     environment: # load env vars
@@ -23,6 +24,7 @@ services:
       BACKEND_DEV_IP: 0.0.0.0
       BACKEND_DEV_PORT: 5001
       NODE_ENV: development
+    working_dir: /app/dev
     # set command to only install node_modules if not present, then startDev
     command: npm run start:dev
     extra_hosts:
@@ -71,3 +73,6 @@ volumes:
   earthquake-hub-mongodb-data:
     external: true # same volume used by other containers
     name: earthquake-hub-mongodb-data
+
+  localDBs:
+    name: localDBs
