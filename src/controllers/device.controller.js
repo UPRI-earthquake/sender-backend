@@ -46,7 +46,9 @@ async function linkDevice(req, res) {
     // Validate input
     const { error } = accountValidationSchema.validate(req.body);
     if (error) {
-      return res.status(400).json({ status: 400, message: error.details[0].message });
+      return res.status(400).json({ 
+        status: responseCodes.DEVICE_LINKING_INVALID_INPUT, 
+        message: error.details[0].message });
     }
 
     let token = await deviceService.checkAuthToken(); // Check auth token from file
@@ -73,7 +75,7 @@ async function linkDevice(req, res) {
     } else {
       console.log(error)
       return res.status(500).json({
-        status: 500,
+        status: responseCodes.DEVICE_LINKING_ERROR,
         message: error
       });
     }
