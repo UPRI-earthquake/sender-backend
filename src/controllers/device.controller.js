@@ -34,12 +34,13 @@ async function getDeviceInfo(req, res) {
   }
 }
 
-
+// Input validation schema
 const accountValidationSchema = Joi.object({
   username: Joi.string().required(),
   password: Joi.string().pattern(new RegExp('^[a-zA-Z0-9]{6,30}$')).required(),
 });
 
+// Function for linking the device to a registered account in ehub-backend
 async function linkDevice(req, res) {
   try {
     // Validate input
