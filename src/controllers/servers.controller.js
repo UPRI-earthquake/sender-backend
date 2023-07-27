@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const Joi = require('joi');
 const streamUtils = require('./stream.utils')
 
+// Function for reading the list of ringservers added in the local file store
 async function getServersList(req, res) {
   try {
     const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
@@ -16,7 +17,7 @@ async function getServersList(req, res) {
   }
 }
 
-
+// // Input validation schema
 const serverInputSchema = Joi.object().keys({
   hostName: Joi.string().required(),
   url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
