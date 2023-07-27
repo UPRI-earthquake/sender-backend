@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const Joi = require('joi');
 const streamUtils = require('./stream.utils')
+const { responseCodes, responseMessages } = require('./responseCodes')
 
 // Function for reading the list of ringservers added in the local file store
 async function getServersList(req, res) {
@@ -10,10 +11,15 @@ async function getServersList(req, res) {
     const data = JSON.parse(jsonString);
     
     console.log(data);
-    res.status(200).json(data);
+    res.status(200).json({
+      status: responseCodes.GET_SERVERS_LIST_SUCCESS,
+      message: 'Get Servers List Success', 
+      payload: data });
   } catch (err) {
     console.error(`Error reading servers.js: ${err}`);
-    res.status(500).json({ status: 500, message: 'Error getting servers list' });
+    res.status(500).json({ 
+      status: responseCodes.GET_SERVERS_LIST_SUCCESS,
+      message: 'Error getting servers list' });
   }
 }
 
@@ -31,7 +37,9 @@ async function linkingStatusCheck(req, res, next) {
   const token = JSON.parse(jsonString);
 
   if (!token.accessToken) {
-    return res.status(409).json({ status: 409, message: 'Link your device first before adding a ringserver url' })
+    return res.status(409).json({ 
+      status: responseCodes.ADD_SERVER_DEVICE_NOT_YET_LINKED, 
+      message: 'Link your device first before adding a ringserver url' })
   }
 
   next(); // Proceed to the next middleware/route handler
@@ -43,7 +51,9 @@ async function addServer(req, res) {
     const result = serverInputSchema.validate(req.body);
     if (result.error) {
       console.log(result.error.details[0].message);
-      return res.status(400).json({ status: 400, message: result.error.details[0].message });
+      return res.status(400).json({ 
+        status: responseCodes.ADD_SERVER_INVALID_INPUT, 
+        message: result.error.details[0].message });
     }
 
     const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
@@ -52,7 +62,9 @@ async function addServer(req, res) {
 
     const duplicate = existingServers.find((item) => item.url === req.body.url);
     if (duplicate) {
-      return res.status(400).json({ status: 400, message: "Server URL already saved" });
+      return res.status(400).json({ 
+        status: responseCodes.ADD_SERVER_DUPLICATE,
+         message: "Server URL already saved" });
     }
 
     const newServer = {
@@ -68,10 +80,14 @@ async function addServer(req, res) {
     await streamUtils.spawnSlink2dali(req.body.url); // Another function from stream.controller which spawns slink2dali childprocess that starts streaming to the specified ringserver
 
     console.log("Server added successfully");
-    return res.status(200).json({ status: 200, message: "Server added successfully" });
+    return res.status(200).json({ 
+      status: responseCodes.ADD_SERVER_SUCCESS, 
+      message: "Server added successfully" });
   } catch (e) {
     console.log(`Error: ${e}`);
-    return res.status(400).json({ status: 400, message: "Error occurred" });
+    return res.status(400).json({ 
+      status: responseCodes.ADD_SERVER_ERROR,
+      message: "Error occurred in adding server" });
   }
 }
 
