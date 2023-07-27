@@ -19,7 +19,7 @@ async function getServersList(req, res) {
 
 const serverInputSchema = Joi.object().keys({
   hostName: Joi.string().required(),
-  url: Joi.string().required(),
+  url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
 });
 
 // Middleware function that checks if the device is already linked to an account
