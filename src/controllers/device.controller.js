@@ -3,7 +3,7 @@ const deviceService = require('../services/device.service')
 const Joi = require('joi')
 const { responseCodes, responseMessages } = require('./responseCodes')
 
-
+// Function for getting the information of the device saved in local file store
 async function getDeviceInfo(req, res) {
   try {
     const filePath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`;
