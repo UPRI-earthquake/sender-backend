@@ -21,10 +21,13 @@ async function getDeviceInfo(req, res) {
     data = JSON.parse(jsonString);
 
     console.log(data.deviceInfo);
-    res.status(200).json(data.deviceInfo);
+    res.status(200).json({ 
+      status: 200,
+      message: 'Get device information success', 
+      payload: data.deviceInfo});
   } catch (error) {
     console.error(`Error reading file: ${error}`);
-    res.status(500).json({ message: 'Error reading file' });
+    res.status(500).json({ status: 500, message: 'Error reading file' });
   }
 }
 
