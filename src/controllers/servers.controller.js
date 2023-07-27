@@ -23,11 +23,6 @@ async function getServersList(req, res) {
   }
 }
 
-// // Input validation schema
-const serverInputSchema = Joi.object().keys({
-  hostName: Joi.string().required(),
-  url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
-});
 
 // Middleware function that checks if the device is already linked to an account
 async function linkingStatusCheck(req, res, next) {
@@ -47,6 +42,12 @@ async function linkingStatusCheck(req, res, next) {
 
 // Function for adding server to json array, adding server to streams object dictionary, and spawning childprocess
 async function addServer(req, res) {
+  // Input validation schema
+  const serverInputSchema = Joi.object().keys({
+    hostName: Joi.string().required(),
+    url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
+  });
+  
   try {
     const result = serverInputSchema.validate(req.body);
     if (result.error) {
