@@ -1,4 +1,5 @@
 const streamUtils = require('./stream.utils')
+const { responseCodes, responseMessages } = require('./responseCodes')
 
 
 let streamsObject = {};
@@ -9,28 +10,38 @@ async function streamStatusCheck(req, res, next) {
 
   const url = req.body.url;
   if (!streamsObject.hasOwnProperty(url)) {
-    return res.status(409).json({ message: 'Ringserver URL is invalid' })
+    return res.status(409).json({ 
+      status: responseCodes.START_STREAMING_INVALID_URL,
+      message: 'Ringserver URL is invalid' })
   }
 
   if (streamsObject[url].status === 'Streaming') {
-    return res.status(409).json({ message: `Device is already streaming to ${url}` })
+    return res.status(409).json({ 
+      status: responseCodes.START_STREAMING_DUPLICATE,
+      message: `Device is already streaming to ${url}` })
   }
 
   next(); // Proceed to the next middleware/route handler
 }
 
+// Function for spawning slink2dali child process
 async function startStreaming(req, res) {
   console.log('POST Request sent on /stream/start endpoint')
 
   try {
     await spawnSlink2dali(req.body.url);
-    res.status(200).json({ message: 'Child Process Spawned Successfully' });
+    res.status(200).json({ 
+      status: responseCodes.START_STREAMING_SUCCESS,
+      message: 'Child Process Spawned Successfully' });
   } catch (error) {
     console.log(`Error spawning slink2dali: ${error}`)
-    res.status(500).json({ error: 'Error spawning child process' });
+    res.status(500).json({ 
+      status: responseCodes.START_STREAMING_ERROR,
+      message: 'Error spawning child process' });
   }
 }
 
+// Function for getting the status of each stream to ringservers 
 async function getStreamingStatus(req, res) {
   console.log('GET Request sent on /stream/status endpoint')
   streamsObject = await streamUtils.getStreamsObject();
@@ -44,7 +55,10 @@ async function getStreamingStatus(req, res) {
     }
   }
 
-  res.status(200).json({ message: 'Get Streams Status Success', payload: outputObject })
+  res.status(200).json({ 
+    status: responseCodes.GET_STREAMS_STATUS_SUCCESS,
+    message: 'Get Streams Status Success', 
+    payload: outputObject })
 }
 
 module.exports = { 
