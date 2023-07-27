@@ -62,7 +62,7 @@ async function linkDevice(req, res) {
     await fs.writeFile(deviceInfoPath, JSON.stringify(deviceInfo));
 
     return res.status(200).json({
-      status: 200,
+      status: responseCodes.DEVICE_LINKING_SUCCESS,
       message: 'Successfully Requested Linking to W1',
     });
   } catch (error) {
