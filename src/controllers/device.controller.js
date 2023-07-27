@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const deviceService = require('../services/device.service')
 const Joi = require('joi')
+const { responseCodes, responseMessages } = require('./responseCodes')
 
 
 async function getDeviceInfo(req, res) {
@@ -22,12 +23,14 @@ async function getDeviceInfo(req, res) {
 
     console.log(data.deviceInfo);
     res.status(200).json({ 
-      status: 200,
+      status: responseCodes.GET_DEVICE_INFO_SUCCESS,
       message: 'Get device information success', 
       payload: data.deviceInfo});
   } catch (error) {
     console.error(`Error reading file: ${error}`);
-    res.status(500).json({ status: 500, message: 'Error reading file' });
+    res.status(500).json({ 
+      status: responseCodes.GET_DEVICE_INFO_ERROR, 
+      message: 'Error reading file' });
   }
 }
 
