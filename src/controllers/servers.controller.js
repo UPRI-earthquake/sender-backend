@@ -47,7 +47,7 @@ async function addServer(req, res) {
     hostName: Joi.string().required(),
     url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
   });
-  
+
   try {
     const result = serverInputSchema.validate(req.body);
     if (result.error) {
@@ -57,6 +57,7 @@ async function addServer(req, res) {
         message: result.error.details[0].message });
     }
 
+    // Read list of servers from servers.json file
     const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
     const jsonString = await fs.readFile(filePath, 'utf-8');
     const existingServers = JSON.parse(jsonString);
@@ -75,10 +76,10 @@ async function addServer(req, res) {
     };
 
     existingServers.push(newServer);
-    await fs.writeFile(filePath, JSON.stringify(existingServers)); // Write the input server to the array of servers in a json file (servers.json)
+    await fs.writeFile(filePath, JSON.stringify(existingServers)); // Add the input server to the array of servers in a json file (servers.json)
 
-    await streamUtils.addNewStream(req.body.url, req.body.hostName); // A function from stream.controller which adds the newly added server to streams object dictionary
-    await streamUtils.spawnSlink2dali(req.body.url); // Another function from stream.controller which spawns slink2dali childprocess that starts streaming to the specified ringserver
+    await streamUtils.addNewStream(req.body.url, req.body.hostName); // Adds the newly added server to streams object dictionary
+    await streamUtils.spawnSlink2dali(req.body.url); // ASpawns slink2dali childprocess that starts streaming to the specified ringserver url
 
     console.log("Server added successfully");
     return res.status(200).json({ 
