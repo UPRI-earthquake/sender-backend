@@ -51,10 +51,20 @@ async function addServer(req, res) {
   try {
     const result = serverInputSchema.validate(req.body);
     if (result.error) {
-      console.log(result.error.details[0].message);
+      const errorMessage = result.error.details[0].message;
+      console.log(errorMessage);
+
+      let statusCode = null;
+      if (errorMessage.includes('hostName') ) {
+        statusCode = responseCodes.ADD_SERVER_INVALID_HOSTNAME
+      } 
+      else if (errorMessage.includes('url')) {
+        statusCode = responseCodes.ADD_SERVER_INVALID_URL
+      } 
+
       return res.status(400).json({ 
-        status: responseCodes.ADD_SERVER_INVALID_INPUT, 
-        message: result.error.details[0].message });
+        status: statusCode, 
+        message: errorMessage });
     }
 
     // Read list of servers from servers.json file
@@ -64,7 +74,7 @@ async function addServer(req, res) {
 
     const duplicate = existingServers.find((item) => item.url === req.body.url);
     if (duplicate) {
-      return res.status(400).json({ 
+      return res.status(401).json({ 
         status: responseCodes.ADD_SERVER_DUPLICATE,
          message: "Server URL already saved" });
     }
@@ -87,7 +97,7 @@ async function addServer(req, res) {
       message: "Server added successfully" });
   } catch (e) {
     console.log(`Error: ${e}`);
-    return res.status(400).json({ 
+    return res.status(500).json({ 
       status: responseCodes.ADD_SERVER_ERROR,
       message: "Error occurred in adding server" });
   }
