@@ -64,7 +64,7 @@ async function addServer(req, res) {
 
       return res.status(400).json({ 
         status: statusCode, 
-        message: errorMessage });
+        message: `Joi validation error: ${errorMessage}` });
     }
 
     // Read list of servers from servers.json file
