@@ -76,13 +76,12 @@ async function addServer(req, res) {
     if (duplicate) {
       return res.status(401).json({ 
         status: responseCodes.ADD_SERVER_DUPLICATE,
-         message: "Server URL already saved" });
+        message: "Server URL already saved" });
     }
 
     const newServer = {
       hostName: req.body.hostName,
-      url: req.body.url,
-      isAllowedToStream: false,
+      url: req.body.url
     };
 
     existingServers.push(newServer);
