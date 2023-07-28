@@ -30,7 +30,7 @@ async function getDeviceInfo(req, res) {
     console.error(`Error reading file: ${error}`);
     res.status(500).json({ 
       status: responseCodes.GET_DEVICE_INFO_ERROR, 
-      message: 'Error reading file' });
+      message: 'Reading device information error' });
   }
 }
 
@@ -44,11 +44,22 @@ async function linkDevice(req, res) {
 
   try {
     // Validate input
-    const { error } = accountValidationSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ 
-        status: responseCodes.DEVICE_LINKING_INVALID_INPUT, 
-        message: error.details[0].message });
+    const result = accountValidationSchema.validate(req.body);
+    if (result.error) {
+      const errorMessage = result.error.details[0].message;
+      console.log(errorMessage);
+
+      let statusCode = null;
+      if (errorMessage.includes('username') ) {
+        statusCode = responseCodes.DEVICE_LINKING_INVALID_USERNAME
+      } 
+      else if (errorMessage.includes('password')) {
+        statusCode = responseCodes.DEVICE_LINKING_INVALID_USERNAME
+      } 
+
+      return res.status(401).json({ 
+        status: statusCode, 
+        message: `Joi validation error: ${errorMessage}` });
     }
 
     let token = await deviceService.checkAuthToken(); // Check auth token from file
@@ -69,7 +80,7 @@ async function linkDevice(req, res) {
     // TODO: Add clean-up function that restores local file stores if an error is encountered while linking
     if (error.response) {
       return res.status(error.response.status).json({
-        status: error.response.status,
+        status: responseCodes.DEVICE_LINKING_EHUB_ERROR,
         message: "Error from earthquake-hub: " + error.response.data.message,
       });
     } else {
