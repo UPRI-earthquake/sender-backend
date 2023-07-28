@@ -10,13 +10,13 @@ async function streamStatusCheck(req, res, next) {
 
   const url = req.body.url;
   if (!streamsObject.hasOwnProperty(url)) {
-    return res.status(409).json({ 
+    return res.status(400).json({ 
       status: responseCodes.START_STREAMING_INVALID_URL,
-      message: 'Ringserver URL is invalid' })
+      message: 'Ringserver URL is not included in the local file store' })
   }
 
   if (streamsObject[url].status === 'Streaming') {
-    return res.status(409).json({ 
+    return res.status(401).json({ 
       status: responseCodes.START_STREAMING_DUPLICATE,
       message: `Device is already streaming to ${url}` })
   }
