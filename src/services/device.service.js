@@ -5,6 +5,8 @@ const https = require('https');
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const utils = require('./utils');
 
+
+// Function for checking if a jwt access token is already saved 
 async function checkAuthToken() {
   // TODO: check validity of jwt
   try {
