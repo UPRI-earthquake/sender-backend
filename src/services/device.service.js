@@ -1,6 +1,5 @@
 const fs = require('fs');
 const axios = require('axios');
-const getmac = require('getmac');
 const https = require('https');
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const utils = require('./utils');
@@ -56,7 +55,7 @@ async function requestAuthToken(username, password) {
 async function requestLinking(token) {
   try {
     const streamId = utils.generate_streamId();
-    const macAddress = getmac.default(); // TODO: CHANGE THIS!
+    const macAddress = utils.read_mac_address();
 
     const json =
     {

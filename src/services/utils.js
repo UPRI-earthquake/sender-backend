@@ -1,5 +1,16 @@
 const fs = require('fs')
 
+function read_mac_address() {
+  try {
+    const mac_address = fs.readFileSync('/sys/class/net/eth0/address', 'utf8');
+    return mac_address.trim();
+  } catch (error) {
+    // log and move on
+    console.log(error)
+  }
+  return '';
+}
+
 function read_network() {
   try {
     const network = fs.readFileSync('/opt/settings/sys/NET.txt', 'utf8');
@@ -89,6 +100,7 @@ async function createLocalFileStoreDir() {
 }
 
 module.exports = {
+  read_mac_address,
   read_network,
   read_station,
   generate_streamId,
