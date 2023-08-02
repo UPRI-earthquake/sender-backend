@@ -1,10 +1,10 @@
 # UPRI-SEISMO-rShake-backend
-This is the backend repository for linking the rShake device to an account in the earthquake-hub citizen science network. This repository is relying on [earthquake-hub-backend](https://github.com/UPRI-earthquake/earthquake-hub-backend)--for authenticating a user, issuing `accessToken` to authenticated user, returning device information saved on the central database, and [slink2dali](https://github.com/UPRI-earthquake/sender-slink2dali)--for forwarding miniseed data using the data link protocol.
+(Improve this plz)This is the backend repository for linking the rShake device to an account in the earthquake-hub citizen science network. This repository is relying on [earthquake-hub-backend](https://github.com/UPRI-earthquake/earthquake-hub-backend)--for authenticating a user, issuing `accessToken` to authenticated user, returning device information saved on the central database, and [slink2dali](https://github.com/UPRI-earthquake/sender-slink2dali)--for forwarding miniseed data using the data link protocol.
 
 ## Installation on a [RaspberryShake Device](https://shop.raspberryshake.org/)
 To install the entire sender software package, run the following command on the [RaspberryShake terminal](https://manual.raspberryshake.org/ssh.html):
 ```bash
-bash <(curl -sSL url)
+bash <(curl https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/install.sh)
 ```
 
 ## Development Setup
