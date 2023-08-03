@@ -22,7 +22,7 @@ if(process.env.NODE_ENV !== 'production'){
 
   const specs = swaggerJsDoc(options);
   const swaggerJson = JSON.stringify(specs, null, 2); // Convert to JSON with 2 spaces as indent
-  fs.writeFileSync('./docs/ehub-backend-api-docs.json', swaggerJson, 'utf8'); // Write the JSON data to a file (e.g., api-docs.json)
+  fs.writeFileSync('./docs/sender-backend-api-docs.json', swaggerJson, 'utf8'); // Write the JSON data to a file (e.g., api-docs.json)
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 }
 
