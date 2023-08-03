@@ -19,36 +19,25 @@ Sender-backend repository uses Docker to provide a consistent and portable devel
 
 ## Development Workflow (Creating New Feature)
 
-### 1. Create New Branch from `dev`
+1. **Create New Branch from `dev`:** To add a new feature, create new branch on your local repository. Make sure that base branch is the `dev` branch:
+    ```bash
+    git checkout -b feature/new-feature
+    ```
+    Please refer to the following tags to name your commit messages and pull request titles:
+    - *draft* - to be completed PR/commit
+    - *feat* - new feature
+    - *fix* - bug fixes
+    - *test* - unit tests
+    - *chore* - (aka housekeeping) cleaning/styling/refactor code, documentations, adding comments
+2. **Commit Changes Then Push to github repository:** Commit your changes with a descriptive commit message then push:
+    ```bash
+    git add .
+    git commit -m "<commit-message-tag>: Short description of the change you want to commit"
+    git push --upstream origin feature/new-feature
+    ```
+3. **Create a Pull Request:** Navigate to UPRI-earthquake's gitHub repository and switch to the new branch. Click the "New Pull Request" button. Be sure to follow the [template for creating a pull request](pull_request_template.md) and the Pull Request Title format: `type: [TASK ID] SHORTENED TASK TITLE`
 
-To add a new feature, create new branch on your local repository. Make sure that your base branch is the `dev` branch:
-```bash
-git checkout -b feature/new-feature
-```
-Please refer to the following tags to name your commit messages and pull request titles:
-1. draft - to be completed PR/commit
-2. feat - new feature
-3. fix - bug fixes
-4. test - unit tests
-5. chore - (aka housekeeping) cleaning/styling/refactor code, documentations, adding comments
-
-### 2. Commit Changes Then Push to github repository:
-
-Commit your changes with a descriptive commit message then push:
-
-```bash
-git add .
-git commit -m "<commit-message-tag>: Short description of the change you want to commit"
-git push --upstream origin feature/new-feature
-```
-
-### 3. Create a Pull Request
-
-Navigate to UPRI-earthquake's gitHub repository and switch to the new branch. Click the "New Pull Request" button. Be sure to follow the [template for creating a pull request](pull_request_template.md) and the Pull Request Title format: `type: [TASK ID] SHORTENED TASK TITLE`
-
-### 4. Review and Merge
-
-Another team member will be assigned to review your pull request and to provide feedback if necessary. Once the changes you have made are approved, they will be merged into the dev branch.
+4. **Review and Merge:** Another team member will be assigned to review your pull request and to provide feedback if necessary. Once the changes you have made are approved, they will be merged into the dev branch.
 
 
 ## Essential Docker Commands:
