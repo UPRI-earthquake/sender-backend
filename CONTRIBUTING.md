@@ -28,11 +28,11 @@ Sender-backend repository uses Docker to provide a consistent and portable devel
     > Note: replace X.Y.Z, and you should be at the same directory as the Dockerfile
 
     ```bash
-    docker build -t ghcr.io/upri-earthquake/sender-frontend:X.Y.Z .
+    docker build -t ghcr.io/upri-earthquake/sender-backend:X.Y.Z .
     ```
 2. Push the image to ghcr.io:
     ```bash
-    docker push ghcr.io/upri-earthquake/sender-frontend:X.Y.Z
+    docker push ghcr.io/upri-earthquake/sender-backend:X.Y.Z
     ```
     > ℹ️ Note: You need an access token to publish, install, and delete private, internal, and public packages in Github Packages. Refer to this [tutorial](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry) on how to authenticate to the container registry.
 
