@@ -3,24 +3,28 @@ const cors = require('cors')
 const bodyParser = require('body-parser')
 const swaggerJsDoc = require('swagger-jsdoc')
 const swaggerUi = require('swagger-ui-express')
+const fs = require('fs')
 
 const app = express()
 
-const options = {
-  swaggerDefinition: {
-    openapi: '3.0.0',
-    info: {
-      title: 'rShake APIs',
-      version: '1.0.0',
-      description: 'These are the API endpoints used for rshake-backend',
+if(process.env.NODE_ENV !== 'production'){
+  const options = {
+    swaggerDefinition: {
+      openapi: '3.0.0',
+      info: {
+        title: 'sender-backend APIs',
+        version: '1.0.0',
+        description: 'These are the API endpoints used for sender-backend',
+      },
     },
-  },
-  apis: ['./src/routes/*.js'], // Path to the API routes
-};
+    apis: ['./src/routes/*.js'], // Path to the API routes
+  };
 
-const specs = swaggerJsDoc(options);
-
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+  const specs = swaggerJsDoc(options);
+  const swaggerJson = JSON.stringify(specs, null, 2); // Convert to JSON with 2 spaces as indent
+  fs.writeFileSync('./docs/ehub-backend-api-docs.json', swaggerJson, 'utf8'); // Write the JSON data to a file (e.g., api-docs.json)
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+}
 
 const port = process.env.NODE_ENV === 'production'
              ? process.env.BACKEND_PROD_PORT
