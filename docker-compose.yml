@@ -18,12 +18,6 @@ services:
       - localDBs:/app/localDBs
     expose:
       - "5001"
-    environment: # load env vars
-      CLIENT_DEV_IP: 0.0.0.0
-      CLIENT_DEV_PORT: 3000
-      BACKEND_DEV_IP: 0.0.0.0
-      BACKEND_DEV_PORT: 5001
-      NODE_ENV: development
     working_dir: /app/dev
     # set command to only install node_modules if not present, then startDev
     command: npm run start:dev
@@ -33,7 +27,7 @@ services:
       - "5001:5001" # Map host port 5001 to container port 5001
 
   earthquake-hub-backend-dep-test:
-    container_name: earthquake-hub-backend-dep-test
+    container_name: earthquake-hub-backend_sender-backend_dep-test
     environment: # load env vars from docker compose --env-file
       MONGO_CONNX_TYPE: ${MONGO_CONNX_TYPE}
       MONGO_HOST: ${MONGO_HOST}
@@ -58,7 +52,7 @@ services:
       - "5000:5000" # Map host port 5000 to container port 5000
 
   mongodb-dep-test:
-    container_name: mongodb-dep-test
+    container_name: mongodb_sender-backend_dep-test
     image: "mongo:5.0"
     volumes:
       - type: volume
