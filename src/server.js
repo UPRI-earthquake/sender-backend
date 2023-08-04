@@ -36,5 +36,8 @@ const ip = process.env.NODE_ENV === 'production'
   : process.env.BACKEND_DEV_IP;
 
 app.listen(port, ip, () => {
-  console.log('App listening on port: ' + port)
+  console.log(`App listening on: ${ip}:${port}`);
+  process.env.NODE_ENV === 'production'
+   ? console.log(`Production client expected (by CORS) at: http://${process.env.CLIENT_PROD_IP}:${process.env.CLIENT_PROD_PORT}`)
+   : console.log(`Development client expected (by CORS) at: http://${process.env.CLIENT_DEV_IP}:${process.env.CLIENT_DEV_PORT}`)
 })
