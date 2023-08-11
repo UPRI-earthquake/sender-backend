@@ -54,7 +54,7 @@ async function linkDevice(req, res) {
         statusCode = responseCodes.DEVICE_LINKING_INVALID_USERNAME
       } 
       else if (errorMessage.includes('password')) {
-        statusCode = responseCodes.DEVICE_LINKING_INVALID_USERNAME
+        statusCode = responseCodes.DEVICE_LINKING_INVALID_PASSWORD
       } 
 
       return res.status(401).json({ 
