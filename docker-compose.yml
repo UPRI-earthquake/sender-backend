@@ -26,7 +26,7 @@ services:
     ports:
       - "5001:5001" # Map host port 5001 to container port 5001
 
-  earthquake-hub-backend-dep-test:
+  earthquake-hub-backend_sender-backend_dep-test:
     container_name: earthquake-hub-backend_sender-backend_dep-test
     environment: # load env vars from docker compose --env-file
       MONGO_CONNX_TYPE: ${MONGO_CONNX_TYPE}
@@ -41,8 +41,14 @@ services:
 
       # jsonwebtoken keys
       ACCESS_TOKEN_PRIVATE_KEY: ${ACCESS_TOKEN_PRIVATE_KEY}
+      JWT_EXPIRY: ${JWT_EXPIRY}
+
+      #vapid keys
+      PUBLIC_VAPID_KEY: ${PUBLIC_VAPID_KEY}
+      PRIVATE_VAPID_KEY: ${PRIVATE_VAPID_KEY}
+      WEB_PUSH_CONTACT: ${WEB_PUSH_CONTACT}
     depends_on:
-      - "mongodb-dep-test"
+      - "mongodb_sender-backend_dep-test"
     image: "ghcr.io/upri-earthquake/earthquake-hub-backend:latest"
     expose:
       - "5000"
@@ -51,7 +57,7 @@ services:
     ports:
       - "5000:5000" # Map host port 5000 to container port 5000
 
-  mongodb-dep-test:
+  mongodb_sender-backend_dep-test:
     container_name: mongodb_sender-backend_dep-test
     image: "mongo:5.0"
     volumes:
