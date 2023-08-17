@@ -3,7 +3,7 @@
 # Constants
 SERVICE="sender-backend.service"
 UNIT_FILE="/lib/systemd/system/$SERVICE"
-IMAGE="ghcr.io/upri-earthquake/sender-backend:0.0.3-arm32v7" #TODO: Change tag to :latest
+IMAGE="ghcr.io/upri-earthquake/sender-backend:latest"
 CONTAINER="sender-backend"
 VOLUME="UPRI-volume"
 DOCKER_NETWORK="UPRI-docker-network"
@@ -115,7 +115,7 @@ function create_container() {
             --volume /opt/settings:/opt/settings:ro \
             --volume UPRI-volume:/app/localDBs \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
-            --env W1_PROD_IP=10.196.16.141/api \
+            --env W1_PROD_IP=https://earthquake.science.upd.edu.ph/api \
             --net UPRI-docker-network \
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
