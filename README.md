@@ -4,7 +4,7 @@ Sender-backend program is the server-side component of the sender web applicatio
 ## Installation on a [RaspberryShake Device](https://shop.raspberryshake.org/)
 To install the entire sender software package, run the following command on the [RaspberryShake terminal](https://manual.raspberryshake.org/ssh.html):
 ```bash
-bash <(curl https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/install.sh)
+bash <(curl "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/install.sh")
 ```
 
 ## Development Setup
