@@ -1,188 +1,68 @@
-const fs = require('fs')
-const path = require('path')
-const axios = require('axios')
-const { spawn } = require('child_process');
-const { read_network, read_station } = require('../routes/utils');
+const streamUtils = require('./stream.utils')
+const { responseCodes, responseMessages } = require('./responseCodes')
+
 
 let streamsObject = {};
 
-// Function for initializing streamsObject dictionary
-async function initializeStreamsObject() {
-  try {
-    const localFileStoreDir = process.env.LOCALDBS_DIRECTORY
-    const jsonString = await fs.promises.readFile(`${localFileStoreDir}/servers.json`, 'utf-8');
-    const serversList = JSON.parse(jsonString);
+// Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.
+async function streamStatusCheck(req, res, next) {
+  await streamUtils.getStreamsObject();
 
-    // Iterate over the serversList and update the StreamsObject
-    serversList.forEach((server) => {
-      const { url, hostName } = server;
-      if (!streamsObject[url]) {
-        // Add the server to StreamsObject if it's a unique URL
-        streamsObject[url] = {
-          hostName: hostName,
-          childProcess: null,
-          status: 'Not Streaming',
-          retryCount: 0
-        };
-      }
-    });
-
-    return streamsObject;
-  } catch (error) {
-    console.log(`Error reading file: ${error}`);
-    return {};
-  }
-}
-
-// Function that checks whether the streamsObject dictionary is initialized or not; returns streamsObject.
-async function getStreamsObject() {
-  if (!streamsObject) {
-    streamsObject = await initializeStreamsObject();
-    return streamsObject;
-  } else {
-    return streamsObject;
-  }
-}
-
-/* 
-Function for updating the status of the specified url in streamsObject dictionary
-  url: ringserver url
-  childProcess: child process object
-  retryFlag: increment retry count by 1, if true
-  resetFlag: reset retryCount to 0,if true
-*/
-async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
-  if (streamsObject.hasOwnProperty(url)) {
-    streamsObject[url].childProcess = childProcess;
-
-    if (retryFlag) {
-      streamsObject[url].retryCount += 1;
-    }
-
-    if (resetFlag) {
-      streamsObject[url].retryCount = 0;
-    }
-    
-    // Set status based on number of spawn retries
-    if (streamsObject[url].retryCount === 0) {
-      streamsObject[url].status = 'Streaming';
-    } else if (streamsObject[url].retryCount <= 3) {
-      streamsObject[url].status = 'Connecting';
-    } else if (streamsObject[url].retryCount > 3) {
-      streamsObject[url].status = 'Error';
-    }
+  const url = req.body.url;
+  if (!streamsObject.hasOwnProperty(url)) {
+    return res.status(400).json({ 
+      status: responseCodes.START_STREAMING_INVALID_URL,
+      message: 'Ringserver URL is not included in the local file store' })
   }
 
-  return streamsObject[url];
-}
+  if (streamsObject[url].status === 'Streaming') {
+    return res.status(401).json({ 
+      status: responseCodes.START_STREAMING_DUPLICATE,
+      message: `Device is already streaming to ${url}` })
+  }
 
-
-async function addNewStream(url, hostName) {
-  streamsObject[url] = {
-    hostName: hostName,
-    childProcess: null,
-    status: 'Not Streaming',
-    retryFlag: 0
-  };
-  console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
+  next(); // Proceed to the next middleware/route handler
 }
 
 // Function for spawning slink2dali child process
-async function spawnSlink2dali(receiver_ringserver) {
-  let childProcess = null;
+async function startStreaming(req, res) {
+  console.log('POST Request sent on /stream/start endpoint')
 
   try {
-    const localFileStoreDir = process.env.LOCALDBS_DIRECTORY
-    const jsonString = await fs.promises.readFile(`${localFileStoreDir}/token.json`, 'utf-8');
-    const token = JSON.parse(jsonString);
-
-    const command = `${process.env.SLINK2DALIPATH}`;
-    const network = read_network()
-    const station = read_station()
-    const net_sta = `${network}_${station}`;
-    const sender_slink2dali = 'docker-host:18000';
-    const options = ['-vvv', '-a', token.accessToken, '-S', net_sta, sender_slink2dali, receiver_ringserver];
-
-    childProcess = spawn(command, options); // Execute the command using spawn
-
-    let hasError = false; // Flag to track if an error occurred
-
-    // Listen for 'error' event from the child process
-    childProcess.on('error', (error) => {
-      console.error(`Error executing command: ${error}`);
-      hasError = true;
-    });
-
-    // Listen for 'close' event from the child process
-    childProcess.on('close', (code, signal) => {
-      console.log(`Child process closed with code ${code} and signal ${signal}`);
-    });
-
-    // Listen for 'exit' event from the child process
-    childProcess.on('exit', async (code, signal) => {
-      console.log(`Child process exited with code ${code} and signal ${signal}`);
-
-      if (hasError) {
-        // Cleanup functions: 
-        const updatedStream = await updateStreamStatus(receiver_ringserver, null, true, false); // Increment the retryCount
-        console.log(childProcess.pid)
-        console.log(updatedStream.retryCount)
-        
-        // Respawn slink2dali with interval depending on the number of retries
-        if (updatedStream.retryCount <= 3) {
-          setTimeout(async () => {
-            console.log('Respawning slink2dali...');
-            await spawnSlink2dali(receiver_ringserver);
-          }, 1000*30); // Set 30-second-timeout (time is in milliseconds) if retryCount is less than or equal to 3 
-        } 
-        else { // retryCount > 3
-          setTimeout(async () => {
-            console.log('Respawning slink2dali...');
-            await spawnSlink2dali(receiver_ringserver);
-          }, 1000*60*2); // Set 2-minute-timeout (time is in milliseconds) if retryCount is more than to 3
-        }
-      }
-    });
-
-    // Listen for 'stdout' event from the child process
-    childProcess.stdout.on('data', async (data) => {
-      console.log(`Command output: ${data}`); // Log output from slink2dali  
-
-      // Listen for 'error' in slink2dali logs
-      if (data.includes('error')) {
-        console.error('Error encountered in slink2dali logs');
-        // Set the error flag to true
-        hasError = true;
-      }
-      
-      // Listen for 'WRITE_SUCCESS' in slink2dali logs
-      if (data.includes('WRITE_SUCCESS')) {
-        await updateStreamStatus(receiver_ringserver, childProcess, false, true); // Reset the retryCount to 0
-      }
-    });
-
-    // Listen for 'stderr' event from the child process
-    childProcess.stderr.on('data', (data) => {
-      console.error(`Command error: ${data}`);
-    });
-
-    await updateStreamStatus(receiver_ringserver, childProcess, false, false); // Do not increment the retryFlag count
-    console.log('Child process spawned successfully');
+    await spawnSlink2dali(req.body.url);
+    res.status(200).json({ 
+      status: responseCodes.START_STREAMING_SUCCESS,
+      message: 'Child Process Spawned Successfully' });
   } catch (error) {
-    console.error(`Error spawning slink2dali: ${error}`);
-    if (childProcess) {
-      childProcess.kill();
-    }
-    // Handle the error and throw an exception
-    throw new Error('Error spawning child process');
+    console.log(`Error spawning slink2dali: ${error}`)
+    res.status(500).json({ 
+      status: responseCodes.START_STREAMING_ERROR,
+      message: 'Error spawning child process' });
   }
 }
 
+// Function for getting the status of each stream to ringservers 
+async function getStreamingStatus(req, res) {
+  console.log('GET Request sent on /stream/status endpoint')
+  streamsObject = await streamUtils.getStreamsObject();
 
-module.exports = {
-  initializeStreamsObject,
-  getStreamsObject,
-  updateStreamStatus,
-  addNewStream,
-  spawnSlink2dali
+  const outputObject = {};
+
+  for (const url in streamsObject) {
+    if (streamsObject.hasOwnProperty(url)) {
+      const { status, hostName, retryCount } = streamsObject[url];
+      outputObject[url] = { status, hostName, retryCount };
+    }
+  }
+
+  res.status(200).json({ 
+    status: responseCodes.GET_STREAMS_STATUS_SUCCESS,
+    message: 'Get Streams Status Success', 
+    payload: outputObject })
+}
+
+module.exports = { 
+  streamStatusCheck,
+  startStreaming,
+  getStreamingStatus
 };

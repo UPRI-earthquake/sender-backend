@@ -1,0 +1,78 @@
+version: '3.9'
+
+services:
+  backend:
+    container_name: sender-backend-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: "build-env" # select dockerfile stage to use
+    platform: linux/arm/v7
+    image: "sender-backend:dev0.0.1"
+    volumes:
+      # bind local dir to reflect changes in container
+      # NOTE: includes everything, including all those in .dockerignore, specifically .env
+      - ./:/app/dev
+      # Bind mount the host's /dev directory to the container's /opt/settings/sys/
+      - ./dev:/opt/settings/sys
+      - localDBs:/app/localDBs
+    expose:
+      - "5001"
+    working_dir: /app/dev
+    # set command to only install node_modules if not present, then startDev
+    command: npm run start:dev
+    extra_hosts:
+       - "host.docker.internal:host-gateway"
+    ports:
+      - "5001:5001" # Map host port 5001 to container port 5001
+
+  earthquake-hub-backend_sender-backend_dep-test:
+    container_name: earthquake-hub-backend_sender-backend_dep-test
+    environment: # load env vars from docker compose --env-file
+      MONGO_CONNX_TYPE: ${MONGO_CONNX_TYPE}
+      MONGO_HOST: ${MONGO_HOST}
+      MONGO_PORT: ${MONGO_PORT}
+      MONGO_NAME: ${MONGO_NAME}
+
+      # production host domain (and for deployment testing)
+      CLIENT_PROD_HOST: ${CLIENT_PROD_HOST}
+      BACKEND_PROD_HOST: ${BACKEND_PROD_HOST}
+      BACKEND_PROD_PORT: ${BACKEND_PROD_PORT}
+
+      # jsonwebtoken keys
+      ACCESS_TOKEN_PRIVATE_KEY: ${ACCESS_TOKEN_PRIVATE_KEY}
+      JWT_EXPIRY: ${JWT_EXPIRY}
+
+      #vapid keys
+      PUBLIC_VAPID_KEY: ${PUBLIC_VAPID_KEY}
+      PRIVATE_VAPID_KEY: ${PRIVATE_VAPID_KEY}
+      WEB_PUSH_CONTACT: ${WEB_PUSH_CONTACT}
+    depends_on:
+      - "mongodb_sender-backend_dep-test"
+    image: "ghcr.io/upri-earthquake/earthquake-hub-backend:latest"
+    expose:
+      - "5000"
+    extra_hosts:
+       - "host.docker.internal:host-gateway"
+    ports:
+      - "5000:5000" # Map host port 5000 to container port 5000
+
+  mongodb_sender-backend_dep-test:
+    container_name: mongodb_sender-backend_dep-test
+    image: "mongo:5.0"
+    volumes:
+      - type: volume
+        source: earthquake-hub-mongodb-data
+        target: /data/db
+    expose:
+      - "27017"
+    ports:
+      - "27017:27017" # Map host port 27017 to container port 27017
+
+volumes:
+  earthquake-hub-mongodb-data:
+    external: true # same volume used by other containers
+    name: earthquake-hub-mongodb-data
+
+  localDBs:
+    name: localDBs

@@ -1,5 +1,46 @@
 const fs = require('fs')
-const path = require('path');   
+
+function read_mac_address() {
+  try {
+    const mac_address = fs.readFileSync('/sys/class/net/eth0/address', 'utf8');
+    return mac_address.trim();
+  } catch (error) {
+    // log and move on
+    console.log(error)
+  }
+  return '';
+}
+
+function read_network() {
+  try {
+    const network = fs.readFileSync('/opt/settings/sys/NET.txt', 'utf8');
+    return network.trim();
+  } catch (error) {
+    // log and move on
+    console.log(error)
+  }
+  return '';
+}
+
+function read_station() {
+  try {
+    const station = fs.readFileSync('/opt/settings/sys/STN.txt', 'utf8');
+    return station.trim();
+  } catch (error) {
+    // log and move on
+    console.log(error)
+  }
+  return '';
+}
+// A function for getting the device streamId from rshake
+function generate_streamId() {
+  let network = read_network() 
+  let station = read_station() 
+
+  return `${network}_${station}_.*/MSEED` // based on RingServer streamID format
+}
+
+
 
 // Function for creating local file store directory and files if it doesn't exists
 async function createLocalFileStoreDir() {
@@ -59,5 +100,9 @@ async function createLocalFileStoreDir() {
 }
 
 module.exports = {
+  read_mac_address,
+  read_network,
+  read_station,
+  generate_streamId,
   createLocalFileStoreDir
 };
