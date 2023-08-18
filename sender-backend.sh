@@ -117,6 +117,7 @@ function create_container() {
             --env LOCALDBS_DIRECTORY=/app/localDBs \
             --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
             --net UPRI-docker-network \
+            --dns 8.8.8.8 \
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
             # 2nd volume: contains NET and STAT info
