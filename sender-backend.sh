@@ -115,7 +115,7 @@ function create_container() {
             --volume /opt/settings:/opt/settings:ro \
             --volume UPRI-volume:/app/localDBs \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
-            --env W1_PROD_IP=https://earthquake.science.upd.edu.ph/api \
+            --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
             --net UPRI-docker-network \
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
