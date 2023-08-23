@@ -44,6 +44,7 @@ async function linkingStatusCheck(req, res, next) {
 async function addServer(req, res) {
   // Input validation schema
   const serverInputSchema = Joi.object().keys({
+    institutionName: Joi.string().required(),
     url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
   });
 
@@ -53,8 +54,16 @@ async function addServer(req, res) {
       const errorMessage = result.error.details[0].message;
       console.log(errorMessage);
 
+      let statusCode = null;
+      if (errorMessage.includes('institutionName') ) {
+        statusCode = responseCodes.ADD_SERVER_INSTITUTIONName_NAME_MISSING
+      } 
+      else if (errorMessage.includes('url')) {
+        statusCode = responseCodes.ADD_SERVER_INVALID_URL
+      } 
+
       return res.status(400).json({ 
-        status: responseCodes.ADD_SERVER_INVALID_URL, 
+        status: statusCode, 
         message: `Joi validation error: ${errorMessage}` });
     }
 
@@ -71,13 +80,14 @@ async function addServer(req, res) {
     }
 
     const newServer = {
+      institutionName: req.body.institutionName,
       url: req.body.url
     };
 
     existingServers.push(newServer);
     await fs.writeFile(filePath, JSON.stringify(existingServers)); // Add the input server to the array of servers in a json file (servers.json)
 
-    await streamUtils.addNewStream(req.body.url, req.body.hostName); // Adds the newly added server to streams object dictionary
+    await streamUtils.addNewStream(req.body.url, req.body.institutionName); // Adds the newly added server to streams object dictionary
     await streamUtils.spawnSlink2dali(req.body.url); // ASpawns slink2dali childprocess that starts streaming to the specified ringserver url
 
     console.log("Server added successfully");

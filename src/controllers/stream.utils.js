@@ -13,11 +13,11 @@ async function initializeStreamsObject() {
 
     // Iterate over the serversList and update the StreamsObject
     serversList.forEach((server) => {
-      const { url, hostName } = server;
+      const { url, institutionName } = server;
       if (!streamsObject[url]) {
         // Add the server to StreamsObject if it's a unique URL
         streamsObject[url] = {
-          hostName: hostName,
+          institutionName: institutionName,
           childProcess: null,
           status: 'Not Streaming',
           retryCount: 0
@@ -75,8 +75,9 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
 }
 
 // Function for adding new stream to streamsObject dictionary
-async function addNewStream(url) {
+async function addNewStream(url, institutionName) {
   streamsObject[url] = {
+    institutionName: institutionName,
     childProcess: null,
     status: 'Connecting',
     retryCount: 0

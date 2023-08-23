@@ -50,8 +50,8 @@ async function getStreamingStatus(req, res) {
 
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
-      const { status, hostName, retryCount } = streamsObject[url];
-      outputObject[url] = { status, hostName, retryCount };
+      const { status, institutionName, retryCount } = streamsObject[url];
+      outputObject[url] = { status, institutionName, retryCount };
     }
   }
 
