@@ -44,7 +44,6 @@ async function linkingStatusCheck(req, res, next) {
 async function addServer(req, res) {
   // Input validation schema
   const serverInputSchema = Joi.object().keys({
-    hostName: Joi.string().required(),
     url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
   });
 
@@ -54,16 +53,8 @@ async function addServer(req, res) {
       const errorMessage = result.error.details[0].message;
       console.log(errorMessage);
 
-      let statusCode = null;
-      if (errorMessage.includes('hostName') ) {
-        statusCode = responseCodes.ADD_SERVER_INVALID_HOSTNAME
-      } 
-      else if (errorMessage.includes('url')) {
-        statusCode = responseCodes.ADD_SERVER_INVALID_URL
-      } 
-
       return res.status(400).json({ 
-        status: statusCode, 
+        status: responseCodes.ADD_SERVER_INVALID_URL, 
         message: `Joi validation error: ${errorMessage}` });
     }
 
@@ -80,7 +71,6 @@ async function addServer(req, res) {
     }
 
     const newServer = {
-      hostName: req.body.hostName,
       url: req.body.url
     };
 
