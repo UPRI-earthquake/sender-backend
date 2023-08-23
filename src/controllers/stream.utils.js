@@ -75,9 +75,8 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
 }
 
 // Function for adding new stream to streamsObject dictionary
-async function addNewStream(url, hostName) {
+async function addNewStream(url) {
   streamsObject[url] = {
-    hostName: hostName,
     childProcess: null,
     status: 'Connecting',
     retryCount: 0
