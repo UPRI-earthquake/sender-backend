@@ -153,4 +153,7 @@ router.get('/info', deviceController.getDeviceInfo);
  */
 router.post('/link', deviceController.linkDevice)
 
+// TODO: add swagger ui docs to this endpoint
+router.post('/unlink', deviceController.unlinkDevice)
+
 module.exports = router;

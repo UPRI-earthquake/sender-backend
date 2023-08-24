@@ -86,8 +86,44 @@ async function requestLinking(token) {
   }
 };
 
+
+async function requestUnlinking(token) {
+  try {
+    const streamId = utils.generate_streamId();
+    const macAddress = utils.read_mac_address();
+
+    const json =
+    {
+      macAddress: macAddress,
+      streamId: streamId
+    };
+    const url = (process.env.NODE_ENV === 'production')
+      ? 'https://' + process.env.W1_PROD_IP + '/device/unlink'
+      : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/device/unlink';
+
+    const response = (process.env.NODE_ENV === 'production')
+      ? await axios.post(url, json, {
+        httpsAgent,
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
+      : await axios.post(url, json, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
+
+    return 'success'; // Device unlinking successful
+  } catch (error) {
+    console.log("Unlinking request error:" + error);
+    throw error; // Send the error to controller
+  }
+};
+
 module.exports = {
   checkAuthToken,
   requestAuthToken,
   requestLinking,
+  requestUnlinking,
 };
