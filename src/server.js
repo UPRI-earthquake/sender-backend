@@ -2,6 +2,7 @@
 const app = require('./app')
 const { createLocalFileStoreDir } = require('./services/utils')
 const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stream.utils')
+let { streamsObject } = require('./controllers/stream.utils')
 
 // Asynchronous function for:
 // 1. creating local file store,
@@ -10,7 +11,7 @@ const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stre
 async function init() {
   try {
     await createLocalFileStoreDir();
-    let streamsObject = await initializeStreamsObject();
+    streamsObject = await initializeStreamsObject();
     console.log(streamsObject)
 
     for (const url in streamsObject) {
