@@ -153,7 +153,41 @@ router.get('/info', deviceController.getDeviceInfo);
  */
 router.post('/link', deviceController.linkDevice)
 
-// TODO: add swagger ui docs to this endpoint
+/** 
+ * @swagger
+ * /device/unlink:
+ *   post:
+ *     summary: Unlink the device from the registered account in earthquake-hub network
+ *     tags:
+ *       - Device
+ *     responses:
+ *       200:
+ *         description: Successful unlinking of device
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: number
+ *                   example: responseCodes.DEVICE_UNLINKING_SUCCESS
+ *                 message:
+ *                   type: string
+ *                   example: "Successfully Requested Unlinking to W1
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: number
+ *                   example: responseCodes.DEVICE_UNLINKING_ERROR
+ *                 message: 
+ *                   type: string
+ *                   example: "Obj.error"
+ */
 router.post('/unlink', deviceController.unlinkDevice)
 
 module.exports = router;
