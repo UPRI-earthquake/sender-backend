@@ -89,7 +89,7 @@ async function addNewStream(url, institutionName) {
 }
 
 // Function for removing a stream to streamsObject dictionary
-async function removeStream() {
+async function clearStreamsObject() {
   console.log(`streamsObject: ${streamsObject}`)
   for (const url in streamsObject) {
     if (streamsObject[url].childProcess != null) { // check if a child process is spawned (not necessarily running)
@@ -206,6 +206,6 @@ module.exports = {
   updateStreamStatus,
   addNewStream,
   spawnSlink2dali,
-  removeStream,
+  clearStreamsObject,
   streamsObject,
 };

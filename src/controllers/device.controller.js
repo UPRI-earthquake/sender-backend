@@ -101,7 +101,7 @@ async function unlinkDevice(req, res) {
   try {
     let token = await deviceService.checkAuthToken(); // Check auth token from file, don't proceed if this is not present
 
-    await streamUtils.removeStream(); // stop spawned child processes
+    await streamUtils.clearStreamsObject(); // stop all spawned child processes
     await deviceService.requestUnlinking(token); // send POST request to W1
 
     const deviceInfoJson = {
