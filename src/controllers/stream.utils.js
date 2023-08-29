@@ -102,6 +102,8 @@ async function clearStreamsObject() {
 
   streamsObject = {}; // Reinitialize streamsOject to empty dictionary
   console.log(`streamsObject dictionary reinitialized: ${streamsObject}`)
+
+  return 'success';
 }
 
 // Function for spawning slink2dali child process
