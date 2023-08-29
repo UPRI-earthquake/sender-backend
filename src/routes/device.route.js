@@ -173,7 +173,7 @@ router.post('/link', deviceController.linkDevice)
  *                   example: responseCodes.DEVICE_UNLINKING_SUCCESS
  *                 message:
  *                   type: string
- *                   example: "Successfully Requested Unlinking to W1
+ *                   example: "Successfully Requested Unlinking to W1"
  *       500:
  *         description: Internal server error
  *         content:
