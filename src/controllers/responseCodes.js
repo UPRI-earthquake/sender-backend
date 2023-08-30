@@ -23,9 +23,7 @@ const responseCodes = {
   ADD_SERVER_SUCCESS: 60,
   ADD_SERVER_ERROR: 160,
   ADD_SERVER_DEVICE_NOT_YET_LINKED: 161,
-  ADD_SERVER_INSTITUTION_NAME_MISSING: 162,
-  ADD_SERVER_INVALID_URL: 163,
-  ADD_SERVER_DUPLICATE: 164,
+  ADD_SERVER_DUPLICATE: 162,
 
   DEVICE_LINKING_SUCCESS: 70,
   DEVICE_LINKING_ERROR: 170,
@@ -63,7 +61,6 @@ const responseMessages = {
   ADD_SERVER_ERROR: "Add server error",
   ADD_SERVER_DEVICE_NOT_YET_LINKED: "Device is not yet linked. Link first.",
   ADD_SERVER_INVALID_HOSTNAME: "Invalid input hostname",
-  ADD_SERVER_INVALID_URL: "Invalid input url",
   ADD_SERVER_DUPLICATE: "Server URL already saved",
 
   DEVICE_LINKING_SUCCESS: "Device linking success",

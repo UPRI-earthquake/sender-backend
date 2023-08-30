@@ -42,31 +42,9 @@ async function linkingStatusCheck(req, res, next) {
 
 // Function for adding server to json array, adding server to streams object dictionary, and spawning childprocess
 async function addServer(req, res) {
-  // Input validation schema
-  const serverInputSchema = Joi.object().keys({
-    institutionName: Joi.string().required(),
-    url: Joi.string().regex(/^(https?:\/\/)?([a-zA-Z0-9.-]+)(\.[a-z]{2,6})?(:[0-9]{2,5})?(\/[^\\s]*)?$/),
-  });
+  // No validation schema since this input is coming directly from W1, not a user input
 
   try {
-    const result = serverInputSchema.validate(req.body);
-    if (result.error) {
-      const errorMessage = result.error.details[0].message;
-      console.log(errorMessage);
-
-      let statusCode = null;
-      if (errorMessage.includes('institutionName') ) {
-        statusCode = responseCodes.ADD_SERVER_INSTITUTIONName_NAME_MISSING
-      } 
-      else if (errorMessage.includes('url')) {
-        statusCode = responseCodes.ADD_SERVER_INVALID_URL
-      } 
-
-      return res.status(400).json({ 
-        status: statusCode, 
-        message: `Joi validation error: ${errorMessage}` });
-    }
-
     // Read list of servers from servers.json file
     const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
     const jsonString = await fs.readFile(filePath, 'utf-8');
