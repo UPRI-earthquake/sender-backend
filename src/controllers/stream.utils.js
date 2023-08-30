@@ -13,11 +13,11 @@ async function initializeStreamsObject() {
 
     // Iterate over the serversList and update the StreamsObject
     serversList.forEach((server) => {
-      const { url, hostName } = server;
+      const { url, institutionName } = server;
       if (!streamsObject[url]) {
         // Add the server to StreamsObject if it's a unique URL
         streamsObject[url] = {
-          hostName: hostName,
+          institutionName: institutionName,
           childProcess: null,
           status: 'Not Streaming',
           retryCount: 0
@@ -34,12 +34,10 @@ async function initializeStreamsObject() {
 
 // Function that checks whether the streamsObject dictionary is initialized or not; returns streamsObject.
 async function getStreamsObject() {
-  if (!streamsObject) {
+  if (streamsObject === {}) {
     streamsObject = await initializeStreamsObject();
-    return streamsObject;
-  } else {
-    return streamsObject;
   }
+  return streamsObject;
 }
 
 /* 
@@ -50,7 +48,7 @@ Function for updating the status of the specified url in streamsObject dictionar
   resetFlag: reset retryCount to 0,if true
 */
 async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
-  if (streamsObject.hasOwnProperty(url)) {
+  if (streamsObject !== {} && streamsObject.hasOwnProperty(url)) {
     streamsObject[url].childProcess = childProcess;
 
     if (retryFlag) {
@@ -69,20 +67,43 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
     } else if (streamsObject[url].retryCount > 3) {
       streamsObject[url].status = 'Error';
     }
-  }
 
-  return streamsObject[url];
+    return streamsObject[url];
+  }
 }
 
 // Function for adding new stream to streamsObject dictionary
-async function addNewStream(url, hostName) {
+async function addNewStream(url, institutionName) {
+  if (streamsObject === undefined) {
+    streamsObject = await initializeStreamsObject();
+    console.log(`streamsObject reinitialized`)
+  }
+
   streamsObject[url] = {
-    hostName: hostName,
+    institutionName: institutionName,
     childProcess: null,
     status: 'Connecting',
     retryCount: 0
   };
   console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
+}
+
+// Function for removing a stream to streamsObject dictionary
+async function clearStreamsObject() {
+  console.log(`streamsObject: ${streamsObject}`)
+  for (const url in streamsObject) {
+    if (streamsObject[url].childProcess != null) { // check if a child process is spawned (not necessarily running)
+      if (!streamsObject[url].childProcess.killed) {
+        await streamsObject[url].childProcess.kill('SIGTERM'); // kill spawned childprocess if it is spawned
+        console.log(`Object removed in streamsObject dictionary`)
+      }
+    }
+  }
+
+  streamsObject = {}; // Reinitialize streamsOject to empty dictionary
+  console.log(`streamsObject dictionary reinitialized: ${streamsObject}`)
+
+  return 'success';
 }
 
 // Function for spawning slink2dali child process
@@ -123,21 +144,26 @@ async function spawnSlink2dali(receiver_ringserver) {
       if (hasError) {
         // Cleanup functions: 
         const updatedStream = await updateStreamStatus(receiver_ringserver, null, true, false); // Increment the retryCount
-        console.log(`pid: ${childProcess.pid}`)
-        console.log(`retryCount: ${updatedStream.retryCount}`)
         
-        // Respawn slink2dali with interval depending on the number of retries
-        if (updatedStream.retryCount <= 3) {
-          setTimeout(async () => {
-            console.log('Respawning slink2dali...');
-            await spawnSlink2dali(receiver_ringserver);
-          }, 1000*30); // Set 30-second-timeout (time is in milliseconds) if retryCount is less than or equal to 3 
-        } 
-        else { // retryCount > 3
-          setTimeout(async () => {
-            console.log('Respawning slink2dali...');
-            await spawnSlink2dali(receiver_ringserver);
-          }, 1000*60*2); // Set 2-minute-timeout (time is in milliseconds) if retryCount is more than to 3
+        console.log(`updatedStream: ${updatedStream}`)
+
+        if (updatedStream != undefined) {
+          console.log(`pid: ${childProcess.pid}`)
+          console.log(`retryCount: ${updatedStream.retryCount}`)
+          
+          // Respawn slink2dali with interval depending on the number of retries
+          if (updatedStream.retryCount <= 3) {
+            setTimeout(async () => {
+              console.log('Respawning slink2dali...');
+              await spawnSlink2dali(receiver_ringserver);
+            }, 1000*30); // Set 30-second-timeout (time is in milliseconds) if retryCount is less than or equal to 3 
+          } 
+          else { // retryCount > 3
+            setTimeout(async () => {
+              console.log('Respawning slink2dali...');
+              await spawnSlink2dali(receiver_ringserver);
+            }, 1000*60*2); // Set 2-minute-timeout (time is in milliseconds) if retryCount is more than to 3
+          }
         }
       }
     });
@@ -181,5 +207,7 @@ module.exports = {
   getStreamsObject,
   updateStreamStatus,
   addNewStream,
-  spawnSlink2dali
+  spawnSlink2dali,
+  clearStreamsObject,
+  streamsObject,
 };

@@ -1,8 +1,7 @@
 const streamUtils = require('./stream.utils')
+let { streamsObject } = require('./stream.utils')
 const { responseCodes, responseMessages } = require('./responseCodes')
 
-
-let streamsObject = {};
 
 // Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.
 async function streamStatusCheck(req, res, next) {
@@ -50,8 +49,8 @@ async function getStreamingStatus(req, res) {
 
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
-      const { status, hostName, retryCount } = streamsObject[url];
-      outputObject[url] = { status, hostName, retryCount };
+      const { status, institutionName, retryCount } = streamsObject[url];
+      outputObject[url] = { status, institutionName, retryCount };
     }
   }
 
