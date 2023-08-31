@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub
-BACKEND_URL="192.168.1.13:9999/sender-backend/sender-backend.sh"
-FRONTEND_URL="192.168.1.13:9999/sender-frontend/sender-frontend.sh"
+BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/sender-backend.sh"
+FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/main/sender-frontend.sh"
 
 # Install sender-backend and sender-frontend into /usr/local/bin directory
 INSTALL_DIR="/usr/local/bin"
