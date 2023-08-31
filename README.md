@@ -1,22 +1,12 @@
-# UPRI-SEISMO-rShake-backend
-This is the backend repository for the linking the rShake device to an account.
+# Sender-backend
+Sender-backend program is the server-side component of the sender web application running on the Raspberry Shake device. For more details, you may refer to the [repository overview and API](https://upri-earthquake.github.io).  
 
-### Development Setup
-#### Prerequisites
-* node
-* npm or yarn
+## Installation on a [RaspberryShake Device](https://shop.raspberryshake.org/)
+To install the entire sender software package, run the following command on the [RaspberryShake terminal](https://manual.raspberryshake.org/ssh.html):
+```bash
+bash <(curl "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/install.sh")
+```
 
-#### Modules/Dependencies
-* *getmac*          - used for getting the device's mac address.
-* *express*         
-* *cors*              
-* *body-parser*     
+## Development Setup
+To run this repository on your local machine, please follow the instructions provided under the [Setting Up The Repository On Your Local Machine](CONTRIBUTING.md#setting-up-the-repository-on-your-local-machine) section of the [contributing.md](CONTRIBUTING.md).
 
-#### Setting Up
-1. Clone this repository.
-2. Run `npm install` or `yarn install` to install dependencies.
-4. Run `npm run dev` to enable at *port 5001*, the following end-points:
-* */mac*            - endpoint for getting device mac address. This will be available on *port 5001*.
-* */accountsInfo*   - 
-* */deviceInfo*     - 
-* */servers*        - 
