@@ -8,9 +8,9 @@ router.use(bodyParser.json())
 
 /**
  * @swagger
- * /servers/getList:
+ * /servers/ringserver-hosts:
  *   get:
- *     summary: Read list of servers saved in a JSON file
+ *     summary: Get list of valid ringserver hosts registered in W1
  *     tags:
  *       - Servers
  *     responses:
@@ -26,21 +26,24 @@ router.use(bodyParser.json())
  *                   example: responseCodes.GET_SERVERS_LIST_SUCCESS
  *                 message:
  *                   type: string
- *                   example: "Get Servers List Success"
+ *                   example: "Get List of Ringserver Hosts Success"
  *                 payload:
- *                   definition: Array of ringservers object saved in json file
+ *                   definition: Array of ringserver hosts object
  *                   type: array
  *                   items:
  *                     type: object
  *                     properties:
- *                       hostName:
+ *                       username:
  *                         type: string
  *                         example: "UPRI's Ringserver"
- *                       url:
+ *                       ringserverUrl:
  *                         type: string
  *                         example: "https://earthquake.science.upd.edu.ph"
+ *                       ringserverPort:
+ *                         type: number
+ *                         example: 16000
  *       500:
- *         description: Error reading servers.json
+ *         description: Error getting list of ringserver-hosts
  *         content:
  *           application/json:
  *             schema:
@@ -51,9 +54,9 @@ router.use(bodyParser.json())
  *                   example: responseCodes.GET_SERVERS_LIST_ERROR
  *                 message:
  *                   type: string
- *                   example: "Error getting servers list"
+ *                   example: "Error getting ringserver hosts"
  */
-router.get('/getList', serverController.getServersList);
+router.get('/ringserver-hosts', serverController.getRingserverHosts);
 
 
 /**
