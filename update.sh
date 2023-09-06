@@ -69,6 +69,22 @@ download_and_install_script() {
     return 0
 }
 
+# Prompt for rebooting the device
+prompt_reboot() {
+    read -rp "Reboot rshake device to apply the changes? (y/n): " choice
+    case "$choice" in
+        y|Y|yes|YES)
+            sudo reboot
+            ;;
+        n|N|no|NO)
+            echo "No reboot requested. Changes will not take effect until the device is rebooted."
+            ;;
+        *)
+            echo "Invalid choice. No reboot requested. Changes will not take effect until the device is rebooted."
+            ;;
+    esac
+}
+
 # Download and install the backend script
 download_and_install_script "$BACKEND_URL" "sender-backend"
 
@@ -91,3 +107,6 @@ sudo sender-frontend INSTALL_SERVICE  || {
     echo "Error in sender-frontend container & service installation. Aborting."
     exit 1
 }
+
+# Prompt for reboot to start the new services
+prompt_reboot
