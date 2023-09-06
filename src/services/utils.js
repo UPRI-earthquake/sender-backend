@@ -2,7 +2,7 @@ const fs = require('fs')
 
 function read_mac_address() {
   try {
-    const mac_address = fs.readFileSync('/sys/class/net/eth0/address', 'utf8');
+    const mac_address = fs.readFileSync('/opt/settings/sys/eth-mac.txt', 'utf8');
     return mac_address.trim();
   } catch (error) {
     // log and move on
