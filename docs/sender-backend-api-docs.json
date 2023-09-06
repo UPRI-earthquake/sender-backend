@@ -1,0 +1,611 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "sender-backend APIs",
+    "version": "1.0.0",
+    "description": "These are the API endpoints used for sender-backend"
+  },
+  "paths": {
+    "/device/info": {
+      "get": {
+        "summary": "Read device information from a JSON file",
+        "tags": [
+          "Device"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with device information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.GET_DEVICE_INFO_SUCCESS"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Reading device information success"
+                    },
+                    "payload": {
+                      "definition": "rshake device information",
+                      "type": "object",
+                      "properties": {
+                        "network": {
+                          "type": "string",
+                          "example": "AM"
+                        },
+                        "station": {
+                          "type": "string",
+                          "example": "R3B2D"
+                        },
+                        "elevation": {
+                          "type": "number",
+                          "example": 50
+                        },
+                        "longitude": {
+                          "type": "number",
+                          "example": 14.123
+                        },
+                        "latitude": {
+                          "type": "number",
+                          "example": 121.121
+                        },
+                        "streamId": {
+                          "type": "string",
+                          "example": "AM_R3B2D.*\\/MSEED"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.GET_DEVICE_INFO_ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Server error occured"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/device/link": {
+      "post": {
+        "summary": "Link the rshake device to a registered account in earthquake-hub network",
+        "tags": [
+          "Device"
+        ],
+        "requestBody": {
+          "description": "User credentials registered in earthquake-hub network",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "Username registered in earthquake-hub network"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "Account's password"
+                  }
+                },
+                "example": {
+                  "username": "citizen",
+                  "password": "testpassword"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response with device information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.DEVICE_LINKING_SUCCESS"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Device linking success"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error from earthquake-hub",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.DEVICE_LINKING_EHUB_ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Error from earthquake-hub: ..."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid inputs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "examples": {
+                  "invalidUsernameInput": {
+                    "value": {
+                      "status": "responseCodes.DEVICE_LINKING_INVALID_USERNAME",
+                      "message": "Joi validation error: ..."
+                    }
+                  },
+                  "invalidPasswordInput": {
+                    "value": {
+                      "status": "responseCodes.DEVICE_LINKING_INVALID_PASSWORD",
+                      "message": "Joi validation error: ..."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.DEVICE_LINKING_ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Device linking error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/device/unlink": {
+      "post": {
+        "summary": "Unlink the device from the registered account in earthquake-hub network",
+        "tags": [
+          "Device"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful unlinking of device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.DEVICE_UNLINKING_SUCCESS"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Successfully Requested Unlinking to W1"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.DEVICE_UNLINKING_ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Obj.error"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/servers/ringserver-hosts": {
+      "get": {
+        "summary": "Get list of valid ringserver hosts registered in W1",
+        "tags": [
+          "Servers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with array of ringservers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.GET_SERVERS_LIST_SUCCESS"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Get List of Ringserver Hosts Success"
+                    },
+                    "payload": {
+                      "definition": "Array of ringserver hosts object",
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "username": {
+                            "type": "string",
+                            "example": "UPRI's Ringserver"
+                          },
+                          "ringserverUrl": {
+                            "type": "string",
+                            "example": "https://earthquake.science.upd.edu.ph"
+                          },
+                          "ringserverPort": {
+                            "type": "number",
+                            "example": 16000
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error getting list of ringserver-hosts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.GET_SERVERS_LIST_ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Error getting ringserver hosts"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/servers/add": {
+      "post": {
+        "summary": "Add a ringserver to the list",
+        "tags": [
+          "Servers"
+        ],
+        "requestBody": {
+          "description": "Supplied here is a valid ringserver url",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Ringserver URL (must be a valid url format)"
+                  },
+                  "hostName": {
+                    "type": "string",
+                    "description": "Ringserver's alias"
+                  }
+                },
+                "example": {
+                  "url": "https://earthquake.science.upd.edu.ph",
+                  "hostName": "UPRI's Ringserver"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.ADD_SERVER_SUCCESS"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Server added successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "examples": {
+                  "invalidHostName": {
+                    "value": {
+                      "status": "responseCodes.ADD_SERVER_INVALID_HOSTNAME",
+                      "message": "Joi validation error: ..."
+                    }
+                  },
+                  "invalidUrl": {
+                    "value": {
+                      "status": "responseCodes.ADD_SERVER_INVALID_URL",
+                      "message": "Joi validation error: ..."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Server input is already saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.ADD_SERVER_DUPLICATE"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Server URL already saved"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.ADD_SERVER_ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Error occurred in adding server"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stream/start": {
+      "post": {
+        "summary": "Start slink2dali streaming to specified servers in the local file store",
+        "tags": [
+          "Stream"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful spawning of slink2dali",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.START_STREAMING_SUCCESS"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Child Process Spawned Successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ringserver url is not saved to local file store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.START_STREAMING_INVALID_URL"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Ringserver URL is not included in the local file store"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Device is already streaming to the specified ringserver url",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.START_STREAMING_DUPLICATE"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Device is already streaming"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.START_STREAMING_ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Error spawning child process"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/stream/status": {
+      "get": {
+        "summary": "Get streaming status to each server",
+        "tags": [
+          "Stream"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "number",
+                      "example": "responseCodes.GET_STREAMS_STATUS_SUCCESS"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Get Streams Status Success"
+                    },
+                    "payload": {
+                      "description": "List of ringserver url",
+                      "type": "object",
+                      "properties": {
+                        "Ringserver's url": {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "example": "Connecting",
+                              "description": "Streaming status of the device to the specified ringserver:\n * `Not Streaming` - when device is newly added\n * `Connecting`    - when device is unsuccessful in connecting to ringserver up to 3 times (reconnection interval is every 30 seconds)\n * `Streaming`     - when device can successfully write to ringserver\n * `Error`         - when device is unsuccessful in connecting to ringserver for more than 3 times (will still try to reconnect every 2 minutes)\n"
+                            },
+                            "hostName": {
+                              "type": "string",
+                              "example": "UPRI's Ringserver"
+                            },
+                            "retryCount": {
+                              "type": "number",
+                              "example": 0
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {},
+  "tags": []
+}
