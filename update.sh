@@ -46,7 +46,6 @@ if [[ -f "$INSTALL_DIR/sender-backend" || -f "$INSTALL_DIR/sender-frontend" ]]; 
 else
     echo -en "[  \e[32mOK\e[0m  ] "
     echo "Both sender-backend and sender-frontend scripts successfully removed from $INSTALL_DIR"
-    exit 0
 fi
 
 
