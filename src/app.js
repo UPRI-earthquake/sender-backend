@@ -34,11 +34,8 @@ const deviceRouter = require('./routes/device.route')
 const serversRouter = require('./routes/servers.route')
 const streamRouter = require('./routes/stream.route')
 
-// Only accept requests comming from client ip and port
- app.use(cors({origin : process.env.NODE_ENV === 'production'
-   ? `http://${process.env.CLIENT_PROD_IP}:${process.env.CLIENT_PROD_PORT}`
-   : `http://${process.env.CLIENT_DEV_IP}:${process.env.CLIENT_DEV_PORT}`
- }))
+// Accept all sources of connection requests. This is to accommodate requests coming from both rs.local:3000 and from the rshake device ip address
+app.use(cors())
 
 app.use(bodyParser.json())
 
