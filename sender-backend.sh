@@ -110,7 +110,7 @@ function create_container() {
         # TODO: Change W1_PROD_IP to earthquake-hub domain /api (for production)
         docker create \
             --name "$CONTAINER" \
-            --add-host $in_docker_hostname:$host_ip \
+            --add-host "$in_docker_hostname:$host_ip" \
             --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \
             --volume /opt/settings:/opt/settings:ro \
             --volume UPRI-volume:/app/localDBs \
