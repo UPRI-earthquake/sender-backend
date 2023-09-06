@@ -103,7 +103,7 @@ function create_container() {
         return 0 # Success
     else
         # get IP of rshake accessible from within the container
-        local host_ip=`ip addr show docker0 | grep -Po 'inet \K[\d.]+'`
+        local host_ip=`ip addr show docker0 | grep -Po 'inet \K[\d.]+' | head -n 1`
         # set domain name on which host_ip will be accessible from within container
         local in_docker_hostname="docker-host"
         # create container
