@@ -1,25 +1,23 @@
 const fs = require('fs').promises;
 const Joi = require('joi');
+const serversService = require('../services/servers.service')
 const streamUtils = require('./stream.utils')
 const { responseCodes, responseMessages } = require('./responseCodes')
 
-// Function for reading the list of ringservers added in the local file store
-async function getServersList(req, res) {
+// Function for getting the list of valid ringserver hosts registered in W1
+async function getRingserverHosts(req, res) {
   try {
-    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
-    const jsonString = await fs.readFile(filePath, 'utf-8');
-    const data = JSON.parse(jsonString);
+    const data = await serversService.requestRingserverHostsList();
     
-    console.log(data);
     res.status(200).json({
       status: responseCodes.GET_SERVERS_LIST_SUCCESS,
-      message: 'Get Servers List Success', 
+      message: 'Get List of Ringserver Hosts Success', 
       payload: data });
   } catch (err) {
-    console.error(`Error reading servers.js: ${err}`);
+    console.error(`Error getRingserverHosts(): ${err}`);
     res.status(500).json({ 
       status: responseCodes.GET_SERVERS_LIST_SUCCESS,
-      message: 'Error getting servers list' });
+      message: 'Error getting ringserver hosts' });
   }
 }
 
@@ -80,4 +78,4 @@ async function addServer(req, res) {
   }
 }
 
-module.exports = { getServersList, addServer, linkingStatusCheck };
+module.exports = { getRingserverHosts, addServer, linkingStatusCheck };
