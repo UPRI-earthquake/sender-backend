@@ -113,7 +113,7 @@ function create_container() {
             --add-host "$in_docker_hostname:$host_ip" \
             --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \
             --volume /opt/settings:/opt/settings:ro \
-            --volume UPRI-volume:/app/localDBs \
+            --volume "$VOLUME":/app/localDBs \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
             --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
             --net UPRI-docker-network \
