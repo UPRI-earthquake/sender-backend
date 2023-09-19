@@ -17,7 +17,7 @@ async function getDeviceInfo(req, res) {
       streamId: null,
     };
 
-    let data = { deviceInfo: defaultDeviceInfo };
+    let data = defaultDeviceInfo;
 
     const jsonString = await fs.readFile(filePath, 'utf-8');
     data = JSON.parse(jsonString);
@@ -26,7 +26,7 @@ async function getDeviceInfo(req, res) {
     res.status(200).json({ 
       status: responseCodes.GET_DEVICE_INFO_SUCCESS,
       message: 'Get device information success', 
-      payload: data.deviceInfo});
+      payload: data});
   } catch (error) {
     console.error(`Error reading file: ${error}`);
     res.status(500).json({ 
