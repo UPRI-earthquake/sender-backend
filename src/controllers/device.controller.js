@@ -41,6 +41,15 @@ async function linkDevice(req, res) {
   const accountValidationSchema = Joi.object({
     username: Joi.string().required(),
     password: Joi.string().pattern(new RegExp('^[a-zA-Z0-9]{6,30}$')).required(),
+    longitude: Joi.string()
+      .regex(/^[-+]?(?:180(?:\.0{1,6})?|(?:1[0-7]\d|0?\d{1,2})(?:\.\d{1,6})?)$/)
+      .required(),
+    latitude: Joi.string()
+      .regex(/^[-+]?(?:90(?:\.0{1,6})?|(?:[0-8]?\d(?:\.\d{1,6})?))$/)
+      .required(),
+    elevation: Joi.string()
+      .regex(/^[-+]?\d+(\.\d+)?$/)
+      .required()
   });
 
   try {
@@ -57,28 +66,38 @@ async function linkDevice(req, res) {
       else if (errorMessage.includes('password')) {
         statusCode = responseCodes.DEVICE_LINKING_INVALID_PASSWORD
       } 
+      else if (errorMessage.includes('longitude')) {
+        statusCode = responseCodes.DEVICE_LINKING_INVALID_LONGITUDE_VALUE
+      } 
+      else if (errorMessage.includes('latitude')) {
+        statusCode = responseCodes.DEVICE_LINKING_INVALID_LATITUDE_VALUE
+      } 
+      else if (errorMessage.includes('elevation')) {
+        statusCode = responseCodes.DEVICE_LINKING_INVALID_ELEVATION_VALUE
+      } 
 
       return res.status(401).json({ 
         status: statusCode, 
-        message: `Joi validation error: ${errorMessage}` });
+        message: `Input error: ${errorMessage}` });
     }
 
-    let token = await deviceService.checkAuthToken(); // Check auth token from file
-    if (!token) {
-      token = await deviceService.requestAuthToken(req.body.username, req.body.password) // Request accessToken in ehub-backend
-    }
+    // Link the device and save device information to json file
+    const payload = await deviceService.requestLinking(req.body);
 
-    // Link the device and get device information
-    const deviceInfo = await deviceService.requestLinking(token);
+    // Save returned token, from W1, to json file
+    const tokenInfo = { accessToken: payload.accessToken }
+    const tokenPath = `${process.env.LOCALDBS_DIRECTORY}/token.json`;
+    await fs.writeFile(tokenPath, JSON.stringify(tokenInfo));
+
+    // Save device information to json file
     const deviceInfoPath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`;
-    await fs.writeFile(deviceInfoPath, JSON.stringify(deviceInfo));
+    await fs.writeFile(deviceInfoPath, JSON.stringify(payload.deviceInfo));
 
     return res.status(200).json({
       status: responseCodes.DEVICE_LINKING_SUCCESS,
       message: 'Successfully Requested Linking to W1',
     });
   } catch (error) {
-    // TODO: Add clean-up function that restores local file stores if an error is encountered while linking
     if (error.response) {
       return res.status(error.response.status).json({
         status: responseCodes.DEVICE_LINKING_EHUB_ERROR,
