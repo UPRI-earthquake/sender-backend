@@ -28,7 +28,7 @@ async function startStreaming(req, res) {
   console.log('POST Request sent on /stream/start endpoint')
 
   try {
-    await spawnSlink2dali(req.body.url);
+    await streamUtils.spawnSlink2dali(req.body.url);
     res.status(200).json({ 
       status: responseCodes.START_STREAMING_SUCCESS,
       message: 'Child Process Spawned Successfully' });

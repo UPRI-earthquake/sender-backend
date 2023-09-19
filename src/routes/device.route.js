@@ -70,7 +70,7 @@ router.get('/info', deviceController.getDeviceInfo);
  * @swagger
  * /device/link:
  *   post:
- *     summary: Link the rshake device to a registered account in earthquake-hub network
+ *     summary: Add the rshake device information to W1 database and link it to a registered account in earthquake-hub network
  *     tags:
  *       - Device
  *     requestBody:
@@ -87,9 +87,21 @@ router.get('/info', deviceController.getDeviceInfo);
  *               password:
  *                 type: string
  *                 description: Account's password
+ *               latitude:
+ *                 type: string
+ *                 description: Device location (in degree coordinates)
+ *               longitude:
+ *                 type: string
+ *                 description: Device location (in degree coordinates)
+ *               elevation:
+ *                 type: string
+ *                 description: Device's elevation relative to sea level 
  *             example:
- *               username: citizen
- *               password: testpassword
+ *               username: "citizen"
+ *               password: "testpassword"
+ *               latitude: "20"
+ *               longitude: "20"
+ *               elevation: "0"
  *     responses:
  *       200:
  *         description: Successful response with device information
@@ -136,6 +148,18 @@ router.get('/info', deviceController.getDeviceInfo);
  *               invalidPasswordInput:
  *                 value:
  *                   status: responseCodes.DEVICE_LINKING_INVALID_PASSWORD
+ *                   message: "Joi validation error: ..."
+ *               invalidLatitudeInput:
+ *                 value:
+ *                   status: responseCodes.DEVICE_LINKING_INVALID_LATITUDE_VALUE
+ *                   message: "Joi validation error: ..."
+ *               invalidLongitudeInput:
+ *                 value:
+ *                   status: responseCodes.DEVICE_LINKING_INVALID_LONGITUDE_VALUE
+ *                   message: "Joi validation error: ..."
+ *               invalidElevationInput:
+ *                 value:
+ *                   status: responseCodes.DEVICE_LINKING_INVALID_ELEVATION_VALUE
  *                   message: "Joi validation error: ..."
  *       500:
  *         description: Internal server error

@@ -22,43 +22,21 @@ async function checkAuthToken() {
   }
 }
 
-async function requestAuthToken(username, password) {
-  try {
-    let auth_url = (process.env.NODE_ENV === 'production')
-      ? 'https://' + process.env.W1_PROD_IP + '/accounts/authenticate'
-      : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/accounts/authenticate';
-    const credentials = {
-      username: username,
-      password: password,
-      role: 'sensor'
-    };
 
-    const response = (process.env.NODE_ENV === 'production')
-      ? await axios.post(auth_url, credentials, { httpsAgent })
-      : await axios.post(auth_url, credentials)
-
-    const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`;
-    const jsonToken = {
-      accessToken: response.data.accessToken,
-      role: 'sensor'
-    };
-
-    await fs.promises.writeFile(filePath, JSON.stringify(jsonToken));
-    return response.data.accessToken;
-  } catch (error) {
-    console.log("requestAuthToken error:" + error);
-    throw error; // Send the error to controller
-  }
-};
-
-
-async function requestLinking(token) {
+// Function for adding the device to db in W1 and linking it to the user input account details
+async function requestLinking(userInput) {
   try {
     const streamId = utils.generate_streamId();
     const macAddress = utils.read_mac_address();
 
     const json =
     {
+      username: userInput.username,
+      password: userInput.password,
+      role: 'sensor',
+      longitude: userInput.longitude,
+      latitude: userInput.latitude,
+      elevation: userInput.elevation,
       macAddress: macAddress,
       streamId: streamId
     };
@@ -66,18 +44,7 @@ async function requestLinking(token) {
       ? 'https://' + process.env.W1_PROD_IP + '/device/link'
       : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/device/link';
 
-    const response = (process.env.NODE_ENV === 'production')
-      ? await axios.post(url, json, {
-        httpsAgent,
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      })
-      : await axios.post(url, json, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      })
+    const response = await axios.post(url, json)
 
     return response.data.payload; // The device information obtained from the response
   } catch (error) {
@@ -123,7 +90,6 @@ async function requestUnlinking(token) {
 
 module.exports = {
   checkAuthToken,
-  requestAuthToken,
   requestLinking,
   requestUnlinking,
 };
