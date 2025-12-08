@@ -42,6 +42,11 @@ const responseCodes = {
   GET_STREAMS_STATUS_SUCCESS: 90,
   GET_STREAMS_STATUS_ERROR: 190,
 
+  HEALTH_NETWORK_SUCCESS: 95,
+  HEALTH_NETWORK_ERROR: 195,
+  HEALTH_TIME_SUCCESS: 96,
+  HEALTH_TIME_ERROR: 196,
+
   STOP_STREAMING_SUCCESS: 30,
   STOP_STREAMING_ERROR: 130,
 
@@ -77,6 +82,11 @@ const responseMessages = {
 
   GET_STREAMS_STATUS_SUCCESS: "Get streams status success",
   GET_STREAMS_STATUS_ERROR: "Get streams status error",
+
+  HEALTH_NETWORK_SUCCESS: "Network health check success",
+  HEALTH_NETWORK_ERROR: "Network health check error",
+  HEALTH_TIME_SUCCESS: "Time health check success",
+  HEALTH_TIME_ERROR: "Time health check error",
 };
 
 module.exports = {

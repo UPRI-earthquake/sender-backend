@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const Joi = require('joi');
 const serversService = require('../services/servers.service')
 const streamUtils = require('./stream.utils')
+const deviceService = require('../services/device.service');
 const { responseCodes, responseMessages } = require('./responseCodes')
 
 // Function for getting the list of valid ringserver hosts registered in W1
@@ -24,12 +25,9 @@ async function getRingserverHosts(req, res) {
 
 // Middleware function that checks if the device is already linked to an account
 async function linkingStatusCheck(req, res, next) {
-  // Read data from token.json file
-  const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`
-  const jsonString = await fs.readFile(filePath, 'utf-8');
-  const token = JSON.parse(jsonString);
-
-  if (!token.accessToken) {
+  try {
+    await deviceService.ensureValidAccessToken();
+  } catch (error) {
     return res.status(409).json({ 
       status: responseCodes.ADD_SERVER_DEVICE_NOT_YET_LINKED, 
       message: 'Link your device first before adding a ringserver url' })

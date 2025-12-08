@@ -51,21 +51,15 @@ EOF
 }
 
 function pull_container() {
-    if docker inspect "$IMAGE" >/dev/null 2>&1; then
-      echo -en "[  \e[32mOK\e[0m  ] "
-      echo "Image $IMAGE already exists."
-      return 0 # Success
+    docker pull "$IMAGE"
+    if [[ $? -eq 0 ]]; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Image $IMAGE pulled successfully."
+        return 0
     else
-      docker pull "$IMAGE"
-      if [[ $? -eq 0 ]]; then
-          echo -en "[  \e[32mOK\e[0m  ] "
-          echo "Image $IMAGE pulled successfully."
-          return 0
-      else
-          echo -en "[\e[1;31mFAILED\e[0m] "
-          echo "Failed to pull image $IMAGE."
-          return 1
-      fi
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to pull image $IMAGE."
+        return 1
     fi
 }
 
@@ -116,8 +110,10 @@ function create_container() {
             --volume "$VOLUME":/app/localDBs \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
             --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
             --net UPRI-docker-network \
-            --dns 8.8.8.8 \
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
             # 2nd volume: contains NET and STAT info
@@ -153,6 +149,15 @@ function start_container() {
             return 1
         fi
     fi
+}
+
+function update_container() {
+    stop_container
+    remove_container
+    pull_container || return 1
+    create_network
+    create_container
+    start_container
 }
 
 ## UNINSTALL FUNCTIONS
@@ -301,6 +306,9 @@ case $1 in
     "START")
         start_container
         ;;
+    "UPDATE")
+        update_container
+        ;;
     "STOP")
         stop_container
         ;;
@@ -320,9 +328,6 @@ case $1 in
         uninstall_service
         ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|NETWORK_SETUP|PULL|CREATE|START|STOP|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|NETWORK_SETUP|PULL|CREATE|START|STOP|UPDATE|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE]"
         ;;
 esac
-
-
-

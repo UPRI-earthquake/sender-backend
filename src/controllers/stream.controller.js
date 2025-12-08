@@ -34,9 +34,12 @@ async function startStreaming(req, res) {
       message: 'Child Process Spawned Successfully' });
   } catch (error) {
     console.log(`Error spawning slink2dali: ${error}`)
-    res.status(500).json({ 
+    const unauthenticated = typeof error?.message === 'string' && error.message.toLowerCase().includes('token');
+    res.status(unauthenticated ? 409 : 500).json({ 
       status: responseCodes.START_STREAMING_ERROR,
-      message: 'Error spawning child process' });
+      message: unauthenticated
+        ? 'Device is not linked or token refresh failed. Relink the device.'
+        : 'Error spawning child process' });
   }
 }
 

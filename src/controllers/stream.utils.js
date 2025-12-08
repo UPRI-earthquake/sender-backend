@@ -1,8 +1,11 @@
 const fs = require('fs')
 const { spawn } = require('child_process');
 const { read_network, read_station } = require('../services/utils');
+const deviceService = require('../services/device.service');
 
 let streamsObject = {};
+const verboseSlinkLogs = process.env.SLINK2DALI_VERBOSE_LOGS === 'true';
+const slinkVerbosityFlag = process.env.SLINK2DALI_VERBOSITY || '-v';
 
 // Function for initializing streamsObject dictionary
 async function initializeStreamsObject() {
@@ -34,7 +37,7 @@ async function initializeStreamsObject() {
 
 // Function that checks whether the streamsObject dictionary is initialized or not; returns streamsObject.
 async function getStreamsObject() {
-  if (streamsObject === {}) {
+  if (!streamsObject || Object.keys(streamsObject).length === 0) {
     streamsObject = await initializeStreamsObject();
   }
   return streamsObject;
@@ -74,7 +77,7 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
 
 // Function for adding new stream to streamsObject dictionary
 async function addNewStream(url, institutionName) {
-  if (streamsObject === undefined) {
+  if (!streamsObject || Object.keys(streamsObject).length === 0) {
     streamsObject = await initializeStreamsObject();
     console.log(`streamsObject reinitialized`)
   }
@@ -111,16 +114,18 @@ async function spawnSlink2dali(receiver_ringserver) {
   let childProcess = null;
 
   try {
-    const localFileStoreDir = process.env.LOCALDBS_DIRECTORY
-    const jsonString = await fs.promises.readFile(`${localFileStoreDir}/token.json`, 'utf-8');
-    const token = JSON.parse(jsonString);
+    const token = await deviceService.ensureValidAccessToken();
 
     const command = `${process.env.SLINK2DALIPATH}`;
     const network = read_network()
     const station = read_station()
     const net_sta = `${network}_${station}`;
     const sender_slink2dali = 'docker-host:18000'; // TODO: On development environment, this should be changed
-    const options = ['-vvv', '-a', token.accessToken, '-S', net_sta, sender_slink2dali, receiver_ringserver];
+    const options = [];
+    if (slinkVerbosityFlag) {
+      options.push(slinkVerbosityFlag);
+    }
+    options.push('-a', token, '-S', net_sta, sender_slink2dali, receiver_ringserver);
 
     childProcess = spawn(command, options); // Execute the command using spawn
 
@@ -170,17 +175,20 @@ async function spawnSlink2dali(receiver_ringserver) {
 
     // Listen for 'stdout' event from the child process
     childProcess.stdout.on('data', async (data) => {
-      console.log(`Command output: ${data}`); // Log output from slink2dali  
+      const message = data.toString();
+      if (verboseSlinkLogs) {
+        console.log(`Command output: ${message.trim()}`); // Log output from slink2dali  
+      }
 
       // Listen for 'error' in slink2dali logs
-      if (data.includes('error')) {
+      if (message.toLowerCase().includes('error') || message.toLowerCase().includes('unauth')) {
         console.error('Error encountered in slink2dali logs');
         // Set the error flag to true
         hasError = true;
       }
       
       // Listen for 'WRITE_SUCCESS' in slink2dali logs
-      if (data.includes('WRITE_SUCCESS')) {
+      if (message.includes('WRITE_SUCCESS')) {
         await updateStreamStatus(receiver_ringserver, childProcess, false, true); // Reset the retryCount to 0
       }
     });
@@ -195,6 +203,10 @@ async function spawnSlink2dali(receiver_ringserver) {
     console.error(`Error spawning slink2dali: ${error}`);
     if (childProcess) {
       childProcess.kill();
+    }
+    if (streamsObject[receiver_ringserver]) {
+      await updateStreamStatus(receiver_ringserver, null, true, false);
+      streamsObject[receiver_ringserver].status = 'Error';
     }
     // Handle the error and throw an exception
     throw new Error('Error spawning child process');

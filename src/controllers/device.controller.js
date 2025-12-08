@@ -1,32 +1,21 @@
-const fs = require('fs').promises;
-const deviceService = require('../services/device.service')
-const streamUtils = require('./stream.utils')
-const Joi = require('joi')
-const { responseCodes, responseMessages } = require('./responseCodes')
+const deviceService = require('../services/device.service');
+const streamUtils = require('./stream.utils');
+const Joi = require('joi');
+const { responseCodes, responseMessages } = require('./responseCodes');
 
 // Function for getting the information of the device saved in local file store
 async function getDeviceInfo(req, res) {
   try {
-    const filePath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`;
-    const defaultDeviceInfo = {
-      network: null,
-      station: null,
-      location: null,
-      channel: null,
-      elevation: null,
-      streamId: null,
-    };
+    const { deviceInfo, hostConfig, linked } = await deviceService.getDeviceDetails();
 
-    let data = defaultDeviceInfo;
-
-    const jsonString = await fs.readFile(filePath, 'utf-8');
-    data = JSON.parse(jsonString);
-
-    // console.log(data.deviceInfo);
     res.status(200).json({ 
       status: responseCodes.GET_DEVICE_INFO_SUCCESS,
       message: 'Get device information success', 
-      payload: data});
+      payload: {
+        ...deviceInfo,
+        linked,
+        hostConfig,
+      }});
   } catch (error) {
     console.error(`Error reading file: ${error}`);
     res.status(500).json({ 
@@ -84,14 +73,16 @@ async function linkDevice(req, res) {
     // Link the device and save device information to json file
     const payload = await deviceService.requestLinking(req.body);
 
-    // Save returned token, from W1, to json file
-    const tokenInfo = { accessToken: payload.accessToken }
-    const tokenPath = `${process.env.LOCALDBS_DIRECTORY}/token.json`;
-    await fs.writeFile(tokenPath, JSON.stringify(tokenInfo));
-
-    // Save device information to json file
-    const deviceInfoPath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`;
-    await fs.writeFile(deviceInfoPath, JSON.stringify(payload.deviceInfo));
+    await deviceService.persistToken(payload.accessToken);
+    await deviceService.persistDeviceInfo(payload.deviceInfo);
+    await deviceService.persistCredentials({
+      username: req.body.username,
+      password: req.body.password,
+      longitude: req.body.longitude,
+      latitude: req.body.latitude,
+      elevation: req.body.elevation,
+      forceRelink: true,
+    });
 
     return res.status(200).json({
       status: responseCodes.DEVICE_LINKING_SUCCESS,
@@ -101,7 +92,9 @@ async function linkDevice(req, res) {
     if (error.response) {
       return res.status(error.response.status).json({
         status: responseCodes.DEVICE_LINKING_EHUB_ERROR,
-        message: "Error from earthquake-hub: " + error.response.data.message,
+        message: error.response?.status === 409
+          ? "Device already linked in Earthquake Hub. Use Reset Link or contact support to move it."
+          : "Error from earthquake-hub: " + error.response.data.message,
       });
     } else {
       console.log(error)
@@ -115,63 +108,64 @@ async function linkDevice(req, res) {
 
 // Function for removing link of the device to a registered account in ehub-backend
 async function unlinkDevice(req, res) {
-  // No validation schema
+  const localOnly = req.query.localOnly === 'true' || req.body?.localOnly === true;
 
   try {
-    let token = await deviceService.checkAuthToken(); // Check auth token from file, don't proceed if this is not present
+    let remoteUnlinkAttempted = false;
+    if (!localOnly) {
+      const token = await deviceService.ensureValidAccessToken(); // Check/refresh auth token from file
 
-    const clearStreamsObject = await streamUtils.clearStreamsObject(); // stop all spawned child processes
-    if (clearStreamsObject !== 'success') {
-        throw new Error('Clearing streams object failed');
+      const clearStreamsObject = await streamUtils.clearStreamsObject(); // stop all spawned child processes
+      if (clearStreamsObject !== 'success') {
+          throw new Error('Clearing streams object failed');
+      }
+
+      await deviceService.requestUnlinking(token); // send POST request to W1
+      remoteUnlinkAttempted = true;
+    } else {
+      await streamUtils.clearStreamsObject();
     }
 
-    await deviceService.requestUnlinking(token); // send POST request to W1
-
-    const deviceInfoJson = {
-      deviceInfo: {
-        network: null,
-        station: null,
-        location: null,
-        channel: null,
-        elevation: null,
-        streamId: null,
-      }
-    };
-    const deviceInfoPath = `${process.env.LOCALDBS_DIRECTORY}/deviceInfo.json`;
-    await fs.writeFile(deviceInfoPath, JSON.stringify(deviceInfoJson)); // save empty device info values to json file
-
-    const tokenJson = { accessToken: null, role: 'sensor' };
-    const tokenPath = `${process.env.LOCALDBS_DIRECTORY}/token.json`;
-    await fs.writeFile(tokenPath, JSON.stringify(tokenJson)); // save empty auth token value to json file
-
-    const serversJson = [];
-    const serversPath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
-    await fs.writeFile(serversPath, JSON.stringify(serversJson));
+    await deviceService.clearLocalLinkState();
 
     return res.status(200).json({
       status: responseCodes.DEVICE_UNLINKING_SUCCESS,
-      message: 'Successfully Requested Unlinking to W1',
+      message: remoteUnlinkAttempted
+        ? 'Successfully Requested Unlinking to W1'
+        : 'Local link state cleared',
     });
   } catch (error) {
-    // TODO: Add clean-up function that restores local file stores if an error is encountered while unlinking
+    if (!localOnly) {
+      // Try to clear local state and stop streams even if remote unlink fails
+      await streamUtils.clearStreamsObject();
+      await deviceService.clearLocalLinkState();
+    }
+
     if (error.response) {
       return res.status(error.response.status).json({
         status: responseCodes.DEVICE_UNLINKING_EHUB_ERROR,
         message: "Error from earthquake-hub: " + error.response.data.message,
       });
     } else {
-      console.log(error)
-      return res.status(500).json({
-        status: responseCodes.DEVICE_UNLINKING_ERROR,
-        message: error
+      console.log(error);
+      return res.status(200).json({
+        status: responseCodes.DEVICE_UNLINKING_SUCCESS,
+        message: 'Local link state cleared. Remote unlink may have failed; re-link to refresh token.',
       });
     }
   }
 };
+
+// Function for clearing link state without contacting W1 (for re-installs/relinking)
+async function resetLinkState(req, res) {
+  req.query.localOnly = 'true';
+  return unlinkDevice(req, res);
+}
 
 
 module.exports = { 
   getDeviceInfo, 
   linkDevice,
   unlinkDevice,
+  resetLinkState,
 };

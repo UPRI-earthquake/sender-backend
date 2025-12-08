@@ -1,5 +1,17 @@
 version: '3.9'
 
+# Dev-only docker-compose for sender-backend + its
+# Earthquake Hub backend and MongoDB dependencies.
+#
+# Notes:
+# - Container name is sender-backend-dev (different from the
+#   production container name "sender-backend" managed on
+#   the RShake by /usr/local/bin/sender-backend).
+# - Does NOT create or use UPRI-docker-network or UPRI-volume,
+#   which are reserved for the actual device deployment.
+# - Environment variables for earthquake-hub-backend_* are
+#   expected from:  docker compose --env-file .env up
+
 services:
   backend:
     container_name: sender-backend-dev
@@ -8,7 +20,7 @@ services:
       dockerfile: Dockerfile
       target: "build-env" # select dockerfile stage to use
     platform: linux/arm/v7
-    image: "sender-backend:dev0.0.1"
+    image: "sender-backend:dev"
     volumes:
       # bind local dir to reflect changes in container
       # NOTE: includes everything, including all those in .dockerignore, specifically .env
