@@ -46,6 +46,8 @@ const responseCodes = {
   HEALTH_NETWORK_ERROR: 195,
   HEALTH_TIME_SUCCESS: 96,
   HEALTH_TIME_ERROR: 196,
+  DEVICE_TOKEN_REFRESH_SUCCESS: 97,
+  DEVICE_TOKEN_REFRESH_ERROR: 197,
 
   STOP_STREAMING_SUCCESS: 30,
   STOP_STREAMING_ERROR: 130,
@@ -87,6 +89,8 @@ const responseMessages = {
   HEALTH_NETWORK_ERROR: "Network health check error",
   HEALTH_TIME_SUCCESS: "Time health check success",
   HEALTH_TIME_ERROR: "Time health check error",
+  DEVICE_TOKEN_REFRESH_SUCCESS: "Access token refresh success",
+  DEVICE_TOKEN_REFRESH_ERROR: "Access token refresh error",
 };
 
 module.exports = {

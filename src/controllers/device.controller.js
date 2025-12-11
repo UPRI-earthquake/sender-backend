@@ -6,7 +6,7 @@ const { responseCodes, responseMessages } = require('./responseCodes');
 // Function for getting the information of the device saved in local file store
 async function getDeviceInfo(req, res) {
   try {
-    const { deviceInfo, hostConfig, linked } = await deviceService.getDeviceDetails();
+    const { deviceInfo, hostConfig, linked, tokenStatus, refreshTokenStatus } = await deviceService.getDeviceDetails();
 
     res.status(200).json({ 
       status: responseCodes.GET_DEVICE_INFO_SUCCESS,
@@ -15,6 +15,8 @@ async function getDeviceInfo(req, res) {
         ...deviceInfo,
         linked,
         hostConfig,
+        tokenStatus,
+        refreshTokenStatus,
       }});
   } catch (error) {
     console.error(`Error reading file: ${error}`);
@@ -38,7 +40,8 @@ async function linkDevice(req, res) {
       .required(),
     elevation: Joi.string()
       .regex(/^[-+]?\d+(\.\d+)?$/)
-      .required()
+      .required(),
+    forceRelink: Joi.boolean().optional(),
   });
 
   try {
@@ -72,16 +75,20 @@ async function linkDevice(req, res) {
 
     // Link the device and save device information to json file
     const payload = await deviceService.requestLinking(req.body);
+    const {
+      accessToken,
+      refreshToken = null,
+      deviceInfo,
+    } = payload || {};
 
-    await deviceService.persistToken(payload.accessToken);
-    await deviceService.persistDeviceInfo(payload.deviceInfo);
-    await deviceService.persistCredentials({
-      username: req.body.username,
-      password: req.body.password,
-      longitude: req.body.longitude,
-      latitude: req.body.latitude,
-      elevation: req.body.elevation,
-      forceRelink: true,
+    if (!accessToken) {
+      throw new Error('Link response missing access token from W1');
+    }
+
+    await deviceService.persistTokenPair({
+      accessToken,
+      refreshToken,
+      deviceInfo,
     });
 
     return res.status(200).json({
@@ -100,7 +107,7 @@ async function linkDevice(req, res) {
       console.log(error)
       return res.status(500).json({
         status: responseCodes.DEVICE_LINKING_ERROR,
-        message: error
+        message: error?.message || 'Device linking failed',
       });
     }
   }
@@ -111,34 +118,43 @@ async function unlinkDevice(req, res) {
   const localOnly = req.query.localOnly === 'true' || req.body?.localOnly === true;
 
   try {
-    let remoteUnlinkAttempted = false;
-    if (!localOnly) {
-      const token = await deviceService.ensureValidAccessToken(); // Check/refresh auth token from file
+    const unlinkIdentifiers = !localOnly ? await deviceService.getUnlinkIdentifiers() : null;
 
-      const clearStreamsObject = await streamUtils.clearStreamsObject(); // stop all spawned child processes
-      if (clearStreamsObject !== 'success') {
-          throw new Error('Clearing streams object failed');
+    // Stop all spawned child processes before attempting unlink
+    const clearedStreams = await streamUtils.clearStreamsObject();
+    if (clearedStreams !== 'success') {
+      throw new Error('Clearing streams object failed');
+    }
+
+    if (!localOnly) {
+      if (!unlinkIdentifiers?.streamId || !unlinkIdentifiers?.macAddress) {
+        return res.status(400).json({
+          status: responseCodes.DEVICE_UNLINKING_ERROR,
+          message: 'Missing device identifiers needed to unlink remotely.',
+        });
       }
 
-      await deviceService.requestUnlinking(token); // send POST request to W1
-      remoteUnlinkAttempted = true;
-    } else {
-      await streamUtils.clearStreamsObject();
+      const token = await deviceService.ensureValidAccessToken(); // Check/refresh auth token from file
+      await deviceService.requestUnlinking(token, unlinkIdentifiers); // send POST request to W1
     }
 
     await deviceService.clearLocalLinkState();
 
     return res.status(200).json({
       status: responseCodes.DEVICE_UNLINKING_SUCCESS,
-      message: remoteUnlinkAttempted
-        ? 'Successfully Requested Unlinking to W1'
-        : 'Local link state cleared',
+      message: localOnly
+        ? 'Local link state cleared'
+        : 'Successfully unlinked device from Earthquake Hub and cleared local state',
     });
   } catch (error) {
-    if (!localOnly) {
-      // Try to clear local state and stop streams even if remote unlink fails
-      await streamUtils.clearStreamsObject();
-      await deviceService.clearLocalLinkState();
+    console.log(error);
+
+    if (localOnly) {
+      try {
+        await deviceService.clearLocalLinkState();
+      } catch (cleanupError) {
+        console.log(cleanupError);
+      }
     }
 
     if (error.response) {
@@ -146,20 +162,46 @@ async function unlinkDevice(req, res) {
         status: responseCodes.DEVICE_UNLINKING_EHUB_ERROR,
         message: "Error from earthquake-hub: " + error.response.data.message,
       });
+    } else if (error.code === 'MISSING_UNLINK_IDENTIFIERS') {
+      return res.status(400).json({
+        status: responseCodes.DEVICE_UNLINKING_ERROR,
+        message: 'Missing device identifiers needed to unlink remotely.',
+      });
     } else {
-      console.log(error);
-      return res.status(200).json({
-        status: responseCodes.DEVICE_UNLINKING_SUCCESS,
-        message: 'Local link state cleared. Remote unlink may have failed; re-link to refresh token.',
+      return res.status(500).json({
+        status: responseCodes.DEVICE_UNLINKING_ERROR,
+        message: localOnly
+          ? 'Unable to clear local link state'
+          : 'Unlink failed before clearing local state. Check token status or use Reset Link State.',
       });
     }
   }
 };
 
-// Function for clearing link state without contacting W1 (for re-installs/relinking)
-async function resetLinkState(req, res) {
-  req.query.localOnly = 'true';
-  return unlinkDevice(req, res);
+// Manual token refresh (bypass scheduler)
+async function refreshAccessToken(req, res) {
+  try {
+    await deviceService.refreshAuthToken();
+    const [tokenStatus, refreshTokenStatus] = await Promise.all([
+      deviceService.getAccessTokenStatus(),
+      deviceService.getRefreshTokenStatus(),
+    ]);
+
+    return res.status(200).json({
+      status: responseCodes.DEVICE_TOKEN_REFRESH_SUCCESS,
+      message: 'Access token refreshed',
+      payload: {
+        tokenStatus,
+        refreshTokenStatus,
+      },
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      status: responseCodes.DEVICE_TOKEN_REFRESH_ERROR,
+      message: error?.message || 'Unable to refresh access token',
+    });
+  }
 }
 
 
@@ -167,5 +209,5 @@ module.exports = {
   getDeviceInfo, 
   linkDevice,
   unlinkDevice,
-  resetLinkState,
+  refreshAccessToken,
 };

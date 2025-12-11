@@ -214,6 +214,6 @@ router.post('/link', deviceController.linkDevice)
  */
 router.post('/unlink', deviceController.unlinkDevice)
 
-router.post('/reset-link', deviceController.resetLinkState)
+router.post('/refresh-token', deviceController.refreshAccessToken)
 
 module.exports = router;

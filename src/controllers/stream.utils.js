@@ -51,28 +51,33 @@ Function for updating the status of the specified url in streamsObject dictionar
   resetFlag: reset retryCount to 0,if true
 */
 async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
-  if (streamsObject !== {} && streamsObject.hasOwnProperty(url)) {
-    streamsObject[url].childProcess = childProcess;
+  await getStreamsObject();
+  const streamEntry = streamsObject[url];
 
-    if (retryFlag) {
-      streamsObject[url].retryCount += 1;
-    }
-
-    if (resetFlag) {
-      streamsObject[url].retryCount = 0;
-    }
-    
-    // Set status based on number of spawn retries
-    if (streamsObject[url].retryCount === 0) {
-      streamsObject[url].status = 'Streaming';
-    } else if (streamsObject[url].retryCount <= 3) {
-      streamsObject[url].status = 'Connecting';
-    } else if (streamsObject[url].retryCount > 3) {
-      streamsObject[url].status = 'Error';
-    }
-
-    return streamsObject[url];
+  if (!streamEntry) {
+    return;
   }
+
+  streamEntry.childProcess = childProcess;
+
+  if (retryFlag) {
+    streamEntry.retryCount += 1;
+  }
+
+  if (resetFlag) {
+    streamEntry.retryCount = 0;
+  }
+  
+  // Set status based on number of spawn retries
+  if (streamEntry.retryCount === 0) {
+    streamEntry.status = 'Streaming';
+  } else if (streamEntry.retryCount <= 3) {
+    streamEntry.status = 'Connecting';
+  } else {
+    streamEntry.status = 'Error';
+  }
+
+  return streamEntry;
 }
 
 // Function for adding new stream to streamsObject dictionary
@@ -208,8 +213,8 @@ async function spawnSlink2dali(receiver_ringserver) {
       await updateStreamStatus(receiver_ringserver, null, true, false);
       streamsObject[receiver_ringserver].status = 'Error';
     }
-    // Handle the error and throw an exception
-    throw new Error('Error spawning child process');
+    // Prevent crashes; mark error and return so caller can continue running
+    return null;
   }
 }
 

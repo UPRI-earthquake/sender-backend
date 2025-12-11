@@ -34,6 +34,7 @@ const deviceRouter = require('./routes/device.route')
 const serversRouter = require('./routes/servers.route')
 const streamRouter = require('./routes/stream.route')
 const healthRouter = require('./routes/health.route')
+const { refreshIfExpiringSoon } = require('./services/device.service');
 
 // Accept all sources of connection requests. This is to accommodate requests coming from both rs.local:3000 and from the rshake device ip address
 app.use(cors())
@@ -44,6 +45,20 @@ app.use('/device', deviceRouter)
 app.use('/servers', serversRouter)
 app.use('/stream', streamRouter)
 app.use('/health', healthRouter)
+
+// Proactive token refresh scheduler
+let refreshTimer = null;
+const scheduleRefresh = async () => {
+  try {
+    await refreshIfExpiringSoon();
+  } catch (error) {
+    console.log(`Proactive token refresh failed: ${error.message || error}`);
+  } finally {
+    const interval = Number(process.env.REFRESH_CHECK_INTERVAL_MS || 15 * 60 * 1000);
+    refreshTimer = setTimeout(scheduleRefresh, interval);
+  }
+};
+scheduleRefresh();
 
 /* Error handler middleware */
 app.use((err, req, res, next) => {
