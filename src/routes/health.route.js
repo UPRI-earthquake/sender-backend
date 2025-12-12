@@ -7,5 +7,6 @@ router.use(bodyParser.json());
 
 router.get('/network', healthController.networkHealth);
 router.get('/time', healthController.timeHealth);
+router.get('/resources', healthController.resourcesHealth);
 
 module.exports = router;

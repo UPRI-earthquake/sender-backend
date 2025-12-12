@@ -3,16 +3,56 @@ const { spawn } = require('child_process');
 const { read_network, read_station } = require('../services/utils');
 const deviceService = require('../services/device.service');
 
+const MAX_LOG_ENTRIES = 20;
+const localStoreDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
+
 let streamsObject = {};
 const verboseSlinkLogs = process.env.SLINK2DALI_VERBOSE_LOGS === 'true';
 const slinkVerbosityFlag = process.env.SLINK2DALI_VERBOSITY || '-v';
 
+async function readServersFile() {
+  try {
+    const jsonString = await fs.promises.readFile(`${localStoreDir()}/servers.json`, 'utf-8');
+    return JSON.parse(jsonString);
+  } catch (error) {
+    console.log(`Error reading servers.json: ${error}`);
+    return [];
+  }
+}
+
+function appendStreamLog(url, message) {
+  if (!message || !url) {
+    return;
+  }
+  const entry = streamsObject[url];
+  if (!entry) {
+    return;
+  }
+  const trimmed = message.toString().trim();
+  if (!trimmed) {
+    return;
+  }
+  const logLine = `[${new Date().toISOString()}] ${trimmed}`;
+  const activeAttemptId = entry.activeAttemptId ?? 'latest';
+  if (!entry.attemptLogs) {
+    entry.attemptLogs = {};
+  }
+  if (!entry.attemptLogs[activeAttemptId]) {
+    entry.attemptLogs[activeAttemptId] = [];
+  }
+  const targetLogs = entry.attemptLogs[activeAttemptId];
+  entry.logs = targetLogs;
+  targetLogs.push(logLine);
+  if (targetLogs.length > MAX_LOG_ENTRIES) {
+    entry.attemptLogs[activeAttemptId] = targetLogs.slice(-MAX_LOG_ENTRIES);
+    entry.logs = entry.attemptLogs[activeAttemptId];
+  }
+}
+
 // Function for initializing streamsObject dictionary
 async function initializeStreamsObject() {
   try {
-    const localFileStoreDir = process.env.LOCALDBS_DIRECTORY
-    const jsonString = await fs.promises.readFile(`${localFileStoreDir}/servers.json`, 'utf-8');
-    const serversList = JSON.parse(jsonString);
+    const serversList = await readServersFile();
 
     // Iterate over the serversList and update the StreamsObject
     serversList.forEach((server) => {
@@ -23,14 +63,18 @@ async function initializeStreamsObject() {
           institutionName: institutionName,
           childProcess: null,
           status: 'Not Streaming',
-          retryCount: 0
+          retryCount: 0,
+          logs: [],
+          attemptLogs: {},
+          attemptId: 0,
+          activeAttemptId: null,
         };
       }
     });
 
     return streamsObject;
   } catch (error) {
-    console.log(`Error reading file: ${error}`);
+    console.log(`Error initializing streams object: ${error}`);
     return {};
   }
 }
@@ -41,6 +85,50 @@ async function getStreamsObject() {
     streamsObject = await initializeStreamsObject();
   }
   return streamsObject;
+}
+
+async function reconcileStreamsWithFile() {
+  const serversList = await readServersFile();
+  await getStreamsObject();
+
+  const urlsInFile = new Set(serversList.map((server) => server.url));
+  const removedUrls = [];
+
+  // Remove any streams that no longer exist in servers.json
+  Object.keys(streamsObject).forEach((url) => {
+    if (!urlsInFile.has(url)) {
+      const entry = streamsObject[url];
+      if (entry?.childProcess && !entry.childProcess.killed) {
+        try {
+          entry.childProcess.kill('SIGTERM');
+        } catch (error) {
+          console.log(`Error killing child process during reconciliation for ${url}: ${error}`);
+        }
+      }
+      delete streamsObject[url];
+      removedUrls.push(url);
+    }
+  });
+
+  // Ensure each entry from servers.json exists in the cache
+  serversList.forEach(({ url, institutionName }) => {
+    if (!streamsObject[url]) {
+      streamsObject[url] = {
+        institutionName,
+        childProcess: null,
+        status: 'Not Streaming',
+        retryCount: 0,
+        logs: [],
+        attemptLogs: {},
+        attemptId: 0,
+        activeAttemptId: null,
+      };
+    } else if (institutionName && !streamsObject[url].institutionName) {
+      streamsObject[url].institutionName = institutionName;
+    }
+  });
+
+  return { streamsObject, removedUrls };
 }
 
 /* 
@@ -66,6 +154,9 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
 
   if (resetFlag) {
     streamEntry.retryCount = 0;
+    streamEntry.logs = [];
+    streamEntry.attemptLogs = {};
+    streamEntry.activeAttemptId = null;
   }
   
   // Set status based on number of spawn retries
@@ -91,7 +182,11 @@ async function addNewStream(url, institutionName) {
     institutionName: institutionName,
     childProcess: null,
     status: 'Connecting',
-    retryCount: 0
+    retryCount: 0,
+    logs: [],
+    attemptLogs: {},
+    attemptId: 0,
+    activeAttemptId: null,
   };
   console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
 }
@@ -114,11 +209,51 @@ async function clearStreamsObject() {
   return 'success';
 }
 
+async function removeStream(url) {
+  await getStreamsObject();
+  const entry = streamsObject[url];
+  if (!entry) {
+    return false;
+  }
+
+  if (entry.childProcess && !entry.childProcess.killed) {
+    try {
+      await entry.childProcess.kill('SIGTERM');
+    } catch (error) {
+      console.log(`Error killing child process for ${url}: ${error}`);
+    }
+  }
+
+  delete streamsObject[url];
+  return true;
+}
+
 // Function for spawning slink2dali child process
 async function spawnSlink2dali(receiver_ringserver) {
   let childProcess = null;
 
   try {
+    await getStreamsObject();
+    if (!streamsObject[receiver_ringserver]) {
+      streamsObject[receiver_ringserver] = {
+        institutionName: receiver_ringserver,
+        childProcess: null,
+        status: 'Connecting',
+        retryCount: 0,
+        logs: [],
+        attemptLogs: {},
+        attemptId: 0,
+        activeAttemptId: null,
+      };
+    }
+
+    const streamEntry = streamsObject[receiver_ringserver];
+    streamEntry.attemptId = (streamEntry.attemptId || 0) + 1;
+    streamEntry.activeAttemptId = streamEntry.attemptId;
+    streamEntry.attemptLogs = {};
+    streamEntry.attemptLogs[streamEntry.activeAttemptId] = [];
+    streamEntry.logs = streamEntry.attemptLogs[streamEntry.activeAttemptId];
+
     const token = await deviceService.ensureValidAccessToken();
 
     const command = `${process.env.SLINK2DALIPATH}`;
@@ -139,6 +274,7 @@ async function spawnSlink2dali(receiver_ringserver) {
     // Listen for 'error' event from the child process
     childProcess.on('error', (error) => {
       console.error(`Error executing command: ${error}`);
+      appendStreamLog(receiver_ringserver, `Process error: ${error.message || error}`);
       hasError = true;
     });
 
@@ -151,7 +287,12 @@ async function spawnSlink2dali(receiver_ringserver) {
     childProcess.on('exit', async (code, signal) => {
       console.log(`Child process exited with code ${code} and signal ${signal}`);
 
-      if (hasError) {
+      const terminatedOnPurpose = signal === 'SIGTERM';
+      const exitCode = typeof code === 'number' ? code : null;
+      const failed = hasError || (!terminatedOnPurpose && exitCode !== 0);
+
+      if (failed) {
+        appendStreamLog(receiver_ringserver, `Process exited with code ${exitCode ?? 'null'} (signal ${signal ?? 'null'})`);
         // Cleanup functions: 
         const updatedStream = await updateStreamStatus(receiver_ringserver, null, true, false); // Increment the retryCount
         
@@ -188,6 +329,7 @@ async function spawnSlink2dali(receiver_ringserver) {
       // Listen for 'error' in slink2dali logs
       if (message.toLowerCase().includes('error') || message.toLowerCase().includes('unauth')) {
         console.error('Error encountered in slink2dali logs');
+        appendStreamLog(receiver_ringserver, message);
         // Set the error flag to true
         hasError = true;
       }
@@ -201,6 +343,8 @@ async function spawnSlink2dali(receiver_ringserver) {
     // Listen for 'stderr' event from the child process
     childProcess.stderr.on('data', (data) => {
       console.error(`Command error: ${data}`);
+      appendStreamLog(receiver_ringserver, data);
+      hasError = true;
     });
 
     console.log('Child process spawned successfully');
@@ -212,6 +356,7 @@ async function spawnSlink2dali(receiver_ringserver) {
     if (streamsObject[receiver_ringserver]) {
       await updateStreamStatus(receiver_ringserver, null, true, false);
       streamsObject[receiver_ringserver].status = 'Error';
+      appendStreamLog(receiver_ringserver, error.message || 'Unexpected spawning error');
     }
     // Prevent crashes; mark error and return so caller can continue running
     return null;
@@ -226,5 +371,7 @@ module.exports = {
   addNewStream,
   spawnSlink2dali,
   clearStreamsObject,
+  removeStream,
+  reconcileStreamsWithFile,
   streamsObject,
 };

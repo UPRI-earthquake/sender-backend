@@ -24,6 +24,9 @@ const responseCodes = {
   ADD_SERVER_ERROR: 160,
   ADD_SERVER_DEVICE_NOT_YET_LINKED: 161,
   ADD_SERVER_DUPLICATE: 162,
+  REMOVE_SERVER_SUCCESS: 63,
+  REMOVE_SERVER_ERROR: 163,
+  REMOVE_SERVER_NOT_FOUND: 164,
 
   DEVICE_LINKING_SUCCESS: 70,
   DEVICE_LINKING_ERROR: 170,
@@ -46,6 +49,8 @@ const responseCodes = {
   HEALTH_NETWORK_ERROR: 195,
   HEALTH_TIME_SUCCESS: 96,
   HEALTH_TIME_ERROR: 196,
+  HEALTH_RESOURCES_SUCCESS: 98,
+  HEALTH_RESOURCES_ERROR: 198,
   DEVICE_TOKEN_REFRESH_SUCCESS: 97,
   DEVICE_TOKEN_REFRESH_ERROR: 197,
 
@@ -72,6 +77,9 @@ const responseMessages = {
   ADD_SERVER_DEVICE_NOT_YET_LINKED: "Device is not yet linked. Link first.",
   ADD_SERVER_INVALID_HOSTNAME: "Invalid input hostname",
   ADD_SERVER_DUPLICATE: "Server URL already saved",
+  REMOVE_SERVER_SUCCESS: "Remove server success",
+  REMOVE_SERVER_ERROR: "Remove server error",
+  REMOVE_SERVER_NOT_FOUND: "Server URL not found",
 
   DEVICE_LINKING_SUCCESS: "Device linking success",
   DEVICE_LINKING_ERROR: "Device linking error",
@@ -89,6 +97,8 @@ const responseMessages = {
   HEALTH_NETWORK_ERROR: "Network health check error",
   HEALTH_TIME_SUCCESS: "Time health check success",
   HEALTH_TIME_ERROR: "Time health check error",
+  HEALTH_RESOURCES_SUCCESS: "Resource utilization snapshot success",
+  HEALTH_RESOURCES_ERROR: "Resource utilization snapshot error",
   DEVICE_TOKEN_REFRESH_SUCCESS: "Access token refresh success",
   DEVICE_TOKEN_REFRESH_ERROR: "Access token refresh error",
 };

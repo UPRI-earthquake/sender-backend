@@ -5,6 +5,7 @@ const { responseCodes, responseMessages } = require('./responseCodes')
 
 // Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.
 async function streamStatusCheck(req, res, next) {
+  await streamUtils.reconcileStreamsWithFile();
   await streamUtils.getStreamsObject();
 
   const url = req.body.url;
@@ -46,14 +47,15 @@ async function startStreaming(req, res) {
 // Function for getting the status of each stream to ringservers 
 async function getStreamingStatus(req, res) {
   console.log('GET Request sent on /stream/status endpoint')
+  await streamUtils.reconcileStreamsWithFile();
   streamsObject = await streamUtils.getStreamsObject();
 
   const outputObject = {};
 
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
-      const { status, institutionName, retryCount } = streamsObject[url];
-      outputObject[url] = { status, institutionName, retryCount };
+      const { status, institutionName, retryCount, logs } = streamsObject[url];
+      outputObject[url] = { status, institutionName, retryCount, logs: logs || [] };
     }
   }
 

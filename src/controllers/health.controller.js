@@ -2,10 +2,85 @@ const dns = require('dns').promises;
 const net = require('net');
 const axios = require('axios');
 const https = require('https');
+const os = require('os');
+const { exec } = require('child_process');
+const { promisify } = require('util');
 const deviceService = require('../services/device.service');
 const { responseCodes } = require('./responseCodes');
 
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+const execAsync = promisify(exec);
+const defaultDiskPath = process.env.RESOURCE_DISK_PATH || '/';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const cpuSampleWindow = Number(process.env.RESOURCE_CPU_SAMPLE_MS || 1000);
+
+async function sampleCpuUsage(sampleWindowMs = cpuSampleWindow) {
+  const start = os.cpus();
+  if (!start || start.length === 0) {
+    return {
+      cores: 0,
+      usagePercent: null,
+      loadAverage: os.loadavg().map((value) => Number(value.toFixed(2))),
+    };
+  }
+
+  await sleep(sampleWindowMs);
+  const end = os.cpus();
+
+  const usageByCore = end.map((cpu, index) => {
+    const startTimes = start[index]?.times;
+    const endTimes = cpu.times;
+    if (!startTimes) {
+      return 0;
+    }
+
+    const idleDiff = endTimes.idle - startTimes.idle;
+    const totalDiff = Object.keys(endTimes).reduce(
+      (acc, key) => acc + (endTimes[key] - startTimes[key]),
+      0,
+    );
+    if (totalDiff <= 0) {
+      return 0;
+    }
+    const utilization = 1 - idleDiff / totalDiff;
+    return Math.min(Math.max(utilization, 0), 1);
+  });
+
+  const avgUsage = usageByCore.reduce((sum, value) => sum + value, 0) / usageByCore.length;
+  return {
+    cores: end.length,
+    usagePercent: Number((avgUsage * 100).toFixed(1)),
+    loadAverage: os.loadavg().map((value) => Number(value.toFixed(2))),
+  };
+}
+
+async function readDiskUsage(path = defaultDiskPath) {
+  const { stdout } = await execAsync(`df -kP ${path}`);
+  const lines = stdout.trim().split('\n');
+  if (lines.length < 2) {
+    throw new Error('Unexpected disk usage output');
+  }
+  const tokens = lines[lines.length - 1].trim().split(/\s+/);
+  if (tokens.length < 5) {
+    throw new Error('Unable to parse disk usage output');
+  }
+
+  const totalKb = Number(tokens[1]);
+  const usedKb = Number(tokens[2]);
+  const freeKb = Number(tokens[3]);
+  const percentToken = tokens[4] || '0%';
+  const usedPercent = Number(percentToken.replace('%', '')) || Math.round((usedKb / Math.max(totalKb, 1)) * 100);
+
+  return {
+    path,
+    totalBytes: totalKb * 1024,
+    usedBytes: usedKb * 1024,
+    freeBytes: freeKb * 1024,
+    usedPercent,
+  };
+}
 
 function buildTarget() {
   const baseUrl = deviceService.buildW1BaseUrl();
@@ -102,7 +177,32 @@ async function timeHealth(req, res) {
   }
 }
 
+async function resourcesHealth(req, res) {
+  try {
+    const [disk, cpu] = await Promise.all([
+      readDiskUsage(defaultDiskPath),
+      sampleCpuUsage(),
+    ]);
+
+    res.status(200).json({
+      status: responseCodes.HEALTH_RESOURCES_SUCCESS,
+      message: 'Resource usage snapshot',
+      payload: {
+        disk,
+        cpu,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: responseCodes.HEALTH_RESOURCES_ERROR,
+      message: 'Unable to read host resource usage',
+      error: error.message,
+    });
+  }
+}
+
 module.exports = {
   networkHealth,
   timeHealth,
+  resourcesHealth,
 };

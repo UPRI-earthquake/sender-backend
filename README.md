@@ -7,6 +7,13 @@ To install the entire sender software package, run the following command on the 
 bash <(curl "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/install.sh")
 ```
 
+### Optional: pre-install health check
+Before installing, you can verify connectivity, disk space, OS/arch, and time sync:
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/preinstall-health-check.sh")
+```
+If everything passes, proceed with the installer command above. Results are printed directly to the terminal.
+
 ## Development Setup
 To run this repository on your local machine, please follow the instructions provided under the [Setting Up The Repository On Your Local Machine](CONTRIBUTING.md#setting-up-the-repository-on-your-local-machine) section of the [contributing.md](CONTRIBUTING.md).
 

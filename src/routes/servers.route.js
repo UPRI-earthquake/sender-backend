@@ -146,6 +146,8 @@ router.get('/ringserver-hosts', serverController.getRingserverHosts);
  */
 router.post('/add', 
   serverController.linkingStatusCheck, // Middleware function
-  serverController.addServer)
+  serverController.addServer);
+
+router.post('/remove', serverController.removeServer);
 
 module.exports = router;

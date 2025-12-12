@@ -76,4 +76,51 @@ async function addServer(req, res) {
   }
 }
 
-module.exports = { getRingserverHosts, addServer, linkingStatusCheck };
+// Function for removing a server from local store and streamsObject
+async function removeServer(req, res) {
+  const url = req.body?.url;
+  if (!url) {
+    return res.status(400).json({
+      status: responseCodes.REMOVE_SERVER_ERROR,
+      message: 'Missing server url',
+    });
+  }
+
+  try {
+    const { removedUrls } = await streamUtils.reconcileStreamsWithFile();
+    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
+    const jsonString = await fs.readFile(filePath, 'utf-8');
+    const existingServers = JSON.parse(jsonString);
+
+    const index = existingServers.findIndex((item) => item.url === url);
+    if (index === -1) {
+      if (removedUrls.includes(url)) {
+        return res.status(200).json({
+          status: responseCodes.REMOVE_SERVER_SUCCESS,
+          message: 'Server removed successfully',
+        });
+      }
+      return res.status(404).json({
+        status: responseCodes.REMOVE_SERVER_NOT_FOUND,
+        message: 'Server URL not found',
+      });
+    }
+
+    existingServers.splice(index, 1);
+    await fs.writeFile(filePath, JSON.stringify(existingServers));
+    await streamUtils.removeStream(url);
+
+    return res.status(200).json({
+      status: responseCodes.REMOVE_SERVER_SUCCESS,
+      message: 'Server removed successfully',
+    });
+  } catch (error) {
+    console.log(`Error removing server: ${error}`);
+    return res.status(500).json({
+      status: responseCodes.REMOVE_SERVER_ERROR,
+      message: 'Error occurred in removing server',
+    });
+  }
+}
+
+module.exports = { getRingserverHosts, addServer, removeServer, linkingStatusCheck };
