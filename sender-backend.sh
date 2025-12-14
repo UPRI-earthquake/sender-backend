@@ -7,6 +7,10 @@ IMAGE="ghcr.io/upri-earthquake/sender-backend:latest"
 CONTAINER="sender-backend"
 VOLUME="UPRI-volume"
 DOCKER_NETWORK="UPRI-docker-network"
+UPDATE_SERVICE="sender-backend-update.service"
+UPDATE_TIMER="sender-backend-update.timer"
+UPDATE_SERVICE_FILE="/lib/systemd/system/$UPDATE_SERVICE"
+UPDATE_TIMER_FILE="/lib/systemd/system/$UPDATE_TIMER"
 
 ## INSTALLATION FUNCTIONS
 
@@ -15,6 +19,8 @@ function install_service() {
     if [[ -f "$UNIT_FILE" ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Unit file $UNIT_FILE already exists."
+        install_update_timer
+        return $?
     else
     # Write unit-file
         cat <<EOF > "$UNIT_FILE"
@@ -39,15 +45,109 @@ EOF
       systemctl daemon-reload
       systemctl --quiet enable "$SERVICE" >/dev/null 2>&1
       if [[ $? -eq 0 ]]; then
-          echo -en "[  \e[32mOK\e[0m  ] "
-          echo "$SERVICE installed as an enabled service."
-          return 0  # Success
+            echo -en "[  \e[32mOK\e[0m  ] "
+            echo "$SERVICE installed as an enabled service."
+          install_update_timer
+          return $?
       else
           echo -en "[\e[1;31mFAILED\e[0m] "
           echo "Something went wrong in installing $SERVICE."
           return 1  # Failure
       fi
     fi
+}
+
+function install_update_timer() {
+    local service_written=0
+    local timer_written=0
+
+    if [[ -f "$UPDATE_SERVICE_FILE" ]]; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Unit file $UPDATE_SERVICE_FILE already exists."
+    else
+        cat <<EOF > "$UPDATE_SERVICE_FILE"
+[Unit]
+Description=UPRI: Sender Stack Auto-update Service
+ConditionPathExists=/usr/local/bin/sender-backend
+ConditionPathExists=/usr/local/bin/sender-frontend
+Wants=docker.service network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=myshake
+ExecStart=/usr/bin/env bash -c '/usr/local/bin/sender-backend UPDATE; backend=\$?; /usr/local/bin/sender-frontend UPDATE; frontend=\$?; exit \$(( backend || frontend ))'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        echo "Unit file $UPDATE_SERVICE_FILE written."
+        service_written=1
+    fi
+
+    if [[ -f "$UPDATE_TIMER_FILE" ]]; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Unit file $UPDATE_TIMER_FILE already exists."
+    else
+        cat <<EOF > "$UPDATE_TIMER_FILE"
+[Unit]
+Description=UPRI: Sender Stack Auto-update Timer
+
+[Timer]
+OnBootSec=15m
+OnUnitActiveSec=1d
+RandomizedDelaySec=30m
+Unit=$UPDATE_SERVICE
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+        echo "Unit file $UPDATE_TIMER_FILE written."
+        timer_written=1
+    fi
+
+    systemctl daemon-reload
+    if systemctl enable --now "$UPDATE_TIMER" >/dev/null 2>&1; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        if [[ $timer_written -eq 1 ]]; then
+            echo "$UPDATE_TIMER installed, enabled, and started."
+        else
+            echo "$UPDATE_TIMER already enabled; ensured it is running."
+        fi
+        return 0
+    else
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to enable or start $UPDATE_TIMER."
+        return 1
+    fi
+}
+
+function uninstall_update_timer() {
+    local removed=0
+
+    systemctl stop "$UPDATE_TIMER" >/dev/null 2>&1
+    systemctl disable "$UPDATE_TIMER" >/dev/null 2>&1
+
+    if [[ -f "$UPDATE_TIMER_FILE" ]]; then
+        rm "$UPDATE_TIMER_FILE"
+        removed=1
+    fi
+
+    if [[ -f "$UPDATE_SERVICE_FILE" ]]; then
+        rm "$UPDATE_SERVICE_FILE"
+        removed=1
+    fi
+
+    systemctl daemon-reload
+
+    echo -en "[  \e[32mOK\e[0m  ] "
+    if [[ $removed -eq 1 ]]; then
+        echo "Auto-update timer removed."
+    else
+        echo "Auto-update timer already removed."
+    fi
+    return 0
 }
 
 function pull_container() {
@@ -260,7 +360,8 @@ function uninstall_service() {
     if [[ ! -f "$UNIT_FILE" ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Unit file $UNIT_FILE does not exist."
-        return 0
+        uninstall_update_timer
+        return $?
     fi
 
     sudo systemctl --quiet stop "$SERVICE" >/dev/null 2>&1
@@ -281,7 +382,8 @@ function uninstall_service() {
     if [[ $? -eq 0 ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "$SERVICE uninstalled successfully."
-        return 0
+        uninstall_update_timer
+        return $?
     else
         echo -en "[\e[1;31mFAILED\e[0m] "
         echo "Failed to remove unit file $UNIT_FILE."
@@ -327,7 +429,13 @@ case $1 in
     "UNINSTALL_SERVICE")
         uninstall_service
         ;;
+    "INSTALL_UPDATE_TIMER")
+        install_update_timer
+        ;;
+    "UNINSTALL_UPDATE_TIMER")
+        uninstall_update_timer
+        ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|NETWORK_SETUP|PULL|CREATE|START|STOP|UPDATE|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|NETWORK_SETUP|PULL|CREATE|START|STOP|UPDATE|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER]"
         ;;
 esac

@@ -1,6 +1,9 @@
 const dns = require('dns').promises;
 const net = require('net');
+const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
+const Sntp = require('@hapi/sntp');
 const https = require('https');
 const os = require('os');
 const { exec } = require('child_process');
@@ -11,6 +14,16 @@ const { responseCodes } = require('./responseCodes');
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const execAsync = promisify(exec);
 const defaultDiskPath = process.env.RESOURCE_DISK_PATH || '/';
+const ntpPort = Number(process.env.NTP_SERVER_PORT || 123);
+const ntpTimeoutMs = Number(process.env.NTP_REQUEST_TIMEOUT_MS || 2000);
+const primaryNtpHost = (process.env.NTP_SERVER_HOST || process.env.NTP_SERVER || '').trim();
+const ntpHostListRaw = process.env.NTP_SERVER_HOSTS || '';
+const defaultNtpHost = 'time.google.com';
+const defaultRingserverPort = Number(process.env.RINGSERVER_DEFAULT_PORT || 18000);
+const ringserverTcpTimeoutMs = Number(process.env.RINGSERVER_TCP_TIMEOUT_MS || 5000);
+const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
+const serversListPath = () => path.join(localDbDir(), 'servers.json');
+const fsp = fs.promises;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -95,6 +108,231 @@ function buildTarget() {
   };
 }
 
+function hasScheme(value = '') {
+  return /^[a-zA-Z][\w+.-]*:\/\//.test(value);
+}
+
+function parseHostPortFallback(value) {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith('[')) {
+    const match = trimmed.match(/^\[([^\]]+)\](?::(\d+))?$/);
+    if (match) {
+      const portValue = match[2] ? Number(match[2]) : null;
+      return {
+        hostname: match[1],
+        port: Number.isFinite(portValue) && portValue > 0 ? portValue : null,
+      };
+    }
+    return null;
+  }
+
+  const portMatch = trimmed.match(/:(\d+)$/);
+  if (portMatch) {
+    const portValue = Number(portMatch[1]);
+    const hostname = trimmed.slice(0, trimmed.length - portMatch[0].length);
+    if (hostname) {
+      return {
+        hostname,
+        port: Number.isFinite(portValue) && portValue > 0 ? portValue : null,
+      };
+    }
+  }
+
+  return { hostname: trimmed, port: null };
+}
+
+function parseRingserverHost(urlText) {
+  if (!urlText || typeof urlText !== 'string') {
+    return null;
+  }
+  const trimmed = urlText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = hasScheme(trimmed) ? trimmed : `tcp://${trimmed}`;
+  try {
+    const parsed = new URL(normalized);
+    const hostname = parsed.hostname || parsed.host;
+    if (!hostname) {
+      return null;
+    }
+    const parsedPort = parsed.port ? Number(parsed.port) : null;
+    return {
+      hostname,
+      port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : defaultRingserverPort,
+      protocol: (parsed.protocol || '').replace(/:$/, '') || 'tcp',
+    };
+  } catch (error) {
+    const fallback = parseHostPortFallback(trimmed);
+    if (!fallback || !fallback.hostname) {
+      return null;
+    }
+    return {
+      hostname: fallback.hostname,
+      port: Number.isFinite(fallback.port) && fallback.port > 0 ? fallback.port : defaultRingserverPort,
+      protocol: 'tcp',
+    };
+  }
+}
+
+function normalizeRingserverEntry(rawEntry, index) {
+  if (!rawEntry) {
+    return null;
+  }
+
+  let url = null;
+  let label = null;
+
+  if (typeof rawEntry === 'string') {
+    url = rawEntry.trim();
+  } else if (typeof rawEntry === 'object') {
+    url = typeof rawEntry.url === 'string' ? rawEntry.url.trim() : null;
+    label = rawEntry.institutionName || rawEntry.hostName || rawEntry.username || rawEntry.label || null;
+  }
+
+  if (!url) {
+    return null;
+  }
+
+  const target = parseRingserverHost(url);
+  if (!target) {
+    return null;
+  }
+
+  const hostnameLabel = target.hostname
+    ? `${target.hostname}${target.port ? `:${target.port}` : ''}`
+    : null;
+
+  return {
+    label: label || hostnameLabel || `Ringserver ${index + 1}`,
+    source: {
+      url,
+      institutionName: label || null,
+    },
+    target,
+  };
+}
+
+async function readRingserverEntries() {
+  const filePath = serversListPath();
+  try {
+    const raw = await fsp.readFile(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.log(`Unable to read ringserver list: ${error.message}`);
+    }
+    return [];
+  }
+}
+
+async function buildRingserverTargets() {
+  const entries = await readRingserverEntries();
+  return entries
+    .map((entry, index) => normalizeRingserverEntry(entry, index))
+    .filter(Boolean);
+}
+
+async function probeRingserverTarget(entry) {
+  const result = {
+    label: entry.label,
+    source: entry.source,
+    target: entry.target,
+    dns: { ok: false },
+    tcp: { ok: false },
+  };
+
+  if (!entry?.target?.hostname) {
+    result.error = 'Ringserver target missing';
+    return result;
+  }
+
+  try {
+    const lookup = await dns.lookup(entry.target.hostname);
+    result.dns = { ok: true, address: lookup.address };
+  } catch (error) {
+    result.dns = { ok: false, error: error.message };
+    return result;
+  }
+
+  await new Promise((resolve) => {
+    const socket = net.createConnection(entry.target.port, entry.target.hostname, () => {
+      result.tcp = { ok: true };
+      socket.destroy();
+      resolve();
+    });
+
+    socket.setTimeout(ringserverTcpTimeoutMs);
+    socket.on('error', (error) => {
+      result.tcp = { ok: false, error: error.message };
+      resolve();
+    });
+    socket.on('timeout', () => {
+      result.tcp = { ok: false, error: 'Connection timed out' };
+      socket.destroy();
+      resolve();
+    });
+  });
+
+  return result;
+}
+
+function parseHostEntries(rawHosts) {
+  if (!rawHosts || typeof rawHosts !== 'string') {
+    return [];
+  }
+  return rawHosts
+    .split(/[\s,]+/)
+    .map((host) => host.trim())
+    .filter((host) => host.length > 0);
+}
+
+function buildNtpTargets() {
+  const hostStrings = [];
+  const addHost = (value) => {
+    if (!value) return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (hostStrings.includes(trimmed)) return;
+    hostStrings.push(trimmed);
+  };
+
+  addHost(primaryNtpHost);
+  addHost(process.env.NTP_SERVER); // legacy override
+  parseHostEntries(ntpHostListRaw).forEach(addHost);
+
+  if (hostStrings.length === 0) {
+    hostStrings.push(defaultNtpHost);
+  }
+
+  return hostStrings
+    .map((entry) => {
+      const normalized = entry.replace(/^(ntp|udp):\/\//i, '');
+      const parts = normalized.split(':');
+      const hostname = parts[0]?.trim();
+      if (!hostname) {
+        return null;
+      }
+      const specifiedPort = parts.length > 1 ? Number(parts[parts.length - 1]) : null;
+      return {
+        hostname,
+        port: Number.isFinite(specifiedPort) && specifiedPort > 0 ? specifiedPort : ntpPort,
+        protocol: 'ntp',
+        timeoutMs: ntpTimeoutMs,
+      };
+    })
+    .filter(Boolean);
+}
+
 async function networkHealth(req, res) {
   const target = buildTarget();
   const responsePayload = {
@@ -102,6 +340,7 @@ async function networkHealth(req, res) {
     dns: { ok: false },
     tcp: { ok: false },
     https: { ok: false },
+    ringservers: [],
   };
 
   try {
@@ -140,6 +379,13 @@ async function networkHealth(req, res) {
     responsePayload.https = { ok: false, error: error.message };
   }
 
+  const ringserverTargets = await buildRingserverTargets();
+  if (ringserverTargets.length > 0) {
+    responsePayload.ringservers = await Promise.all(
+      ringserverTargets.map((entry) => probeRingserverTarget(entry)),
+    );
+  }
+
   res.status(200).json({
     status: responseCodes.HEALTH_NETWORK_SUCCESS,
     message: 'Network health check complete',
@@ -148,33 +394,59 @@ async function networkHealth(req, res) {
 }
 
 async function timeHealth(req, res) {
-  const target = buildTarget();
-  try {
-    const start = Date.now();
-    const resp = await axios.head(target.baseUrl, { timeout: 5000, httpsAgent, validateStatus: () => true });
-    const end = Date.now();
-    const serverDate = resp.headers?.date ? new Date(resp.headers.date).getTime() : null;
-    const roundTripMs = end - start;
-    const adjustedLocal = start + Math.round(roundTripMs / 2);
-    const offsetMs = serverDate ? serverDate - adjustedLocal : null;
+  const targets = buildNtpTargets();
+  const attempts = [];
 
-    res.status(200).json({
-      status: responseCodes.HEALTH_TIME_SUCCESS,
-      message: 'Time synchronization check complete',
-      payload: {
-        target,
-        serverDate,
-        offsetMs,
-        roundTripMs,
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: responseCodes.HEALTH_TIME_ERROR,
-      message: 'Time synchronization check failed',
-      error: error.message,
-    });
+  for (const target of targets) {
+    try {
+      const ntpResponse = await Sntp.time({
+        host: target.hostname,
+        port: target.port,
+        timeout: target.timeoutMs > 0 ? target.timeoutMs : undefined,
+      });
+      const offsetMs = Number.isFinite(ntpResponse?.t) ? Math.round(ntpResponse.t) : null;
+      const roundTripMs = Number.isFinite(ntpResponse?.d) ? Math.round(ntpResponse.d) : null;
+      const serverDate = Number.isFinite(ntpResponse?.transmitTimestamp)
+        ? ntpResponse.transmitTimestamp
+        : null;
+
+      attempts.push({
+        hostname: target.hostname,
+        port: target.port,
+        ok: true,
+      });
+
+      res.status(200).json({
+        status: responseCodes.HEALTH_TIME_SUCCESS,
+        message: 'Time synchronization check complete',
+        payload: {
+          target,
+          serverDate,
+          offsetMs,
+          roundTripMs,
+          leapIndicator: ntpResponse?.leapIndicator,
+          stratum: ntpResponse?.stratum,
+          referenceId: ntpResponse?.referenceId,
+          attempts,
+        }
+      });
+      return;
+    } catch (error) {
+      attempts.push({
+        hostname: target.hostname,
+        port: target.port,
+        ok: false,
+        error: error.message,
+      });
+    }
   }
+
+  res.status(500).json({
+    status: responseCodes.HEALTH_TIME_ERROR,
+    message: 'Time synchronization check failed',
+    error: 'Unable to reach any configured NTP hosts',
+    payload: { attempts },
+  });
 }
 
 async function resourcesHealth(req, res) {

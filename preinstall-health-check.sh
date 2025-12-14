@@ -20,6 +20,10 @@ RESOLVE_RETRIES="${RESOLVE_RETRIES:-2}"
 HTTP_TIMEOUT="${HTTP_TIMEOUT:-5}"
 MAX_TIME_SKEW_SEC="${MAX_TIME_SKEW_SEC:-120}"
 NTP_TIMEOUT="${NTP_TIMEOUT:-5}"
+NTP_CONF_PATH="${NTP_CONF_PATH:-/etc/ntp.conf}"
+NTP_POOL_ENTRY="${NTP_POOL_ENTRY:-server 0.asia.pool.ntp.org}"
+NTP_AUTO_REPAIR="${NTP_AUTO_REPAIR:-0}"
+NTP_SERVICE_NAME="${NTP_SERVICE_NAME:-ntp}"
 
 CRITICAL_FAIL=0
 WARNINGS=0
@@ -315,6 +319,81 @@ check_time_sync() {
   fi
 }
 
+check_ntp_runtime() {
+  if command -v timedatectl >/dev/null 2>&1; then
+    status_output=$(timedatectl status 2>/dev/null)
+    synced=$(echo "$status_output" | awk -F': ' '/System clock synchronized/ {print tolower($2); exit}')
+    service=$(echo "$status_output" | awk -F': ' '/NTP service/ {print tolower($2); exit}')
+    combined="timedatectl: System clock synchronized=${synced:-unknown}; NTP service=${service:-unknown}"
+    if [ "$synced" = "yes" ] || [ "$service" = "active" ]; then
+      status_pass "$combined"
+    else
+      status_warn "$combined.
+  Actions: run 'sudo timedatectl set-ntp true' or install/start ntp/chrony so the clock can sync."
+    fi
+    return
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet "$NTP_SERVICE_NAME" 2>/dev/null; then
+      status_pass "systemctl: $NTP_SERVICE_NAME service is active."
+    else
+      status_warn "systemctl: $NTP_SERVICE_NAME service is inactive or missing.
+  Actions: install and start it via 'sudo apt install ntp && sudo systemctl enable --now $NTP_SERVICE_NAME', or configure chrony/timesyncd."
+    fi
+    return
+  fi
+
+  status_warn "Unable to read NTP service status (timedatectl/systemctl unavailable); verify manually with 'ps -ef | grep ntp'."
+}
+
+check_ntp_configuration() {
+  if [ ! -f "$NTP_CONF_PATH" ]; then
+    status_warn "NTP config $NTP_CONF_PATH not found (install ntp or set NTP_CONF_PATH)."
+    return
+  fi
+
+  desired_host=$(printf '%s\n' "$NTP_POOL_ENTRY" | awk '{print $2}')
+  display_host="$desired_host"
+  [ -z "$display_host" ] && display_host="$NTP_POOL_ENTRY"
+  entry_present=0
+
+  if [ -n "$desired_host" ]; then
+    if grep -Eq "^[[:space:]]*(server|pool)[[:space:]]+$desired_host([[:space:]]|$)" "$NTP_CONF_PATH"; then
+      entry_present=1
+    fi
+  else
+    if grep -Fq "$NTP_POOL_ENTRY" "$NTP_CONF_PATH"; then
+      entry_present=1
+    fi
+  fi
+
+  if [ "$entry_present" -eq 1 ]; then
+    status_pass "$NTP_CONF_PATH already contains $display_host."
+    return
+  fi
+
+  if [ "$NTP_AUTO_REPAIR" -eq 1 ]; then
+    if [ ! -w "$NTP_CONF_PATH" ]; then
+      status_fail "Cannot modify $NTP_CONF_PATH (insufficient permissions). Run with sudo or set NTP_AUTO_REPAIR=0 to skip auto-fix."
+      return
+    fi
+    backup="${NTP_CONF_PATH}.preinstall.$(date +%Y%m%d%H%M%S).bak"
+    if cp "$NTP_CONF_PATH" "$backup" 2>/dev/null; then
+      if printf '\n%s\n' "$NTP_POOL_ENTRY" >> "$NTP_CONF_PATH"; then
+        status_pass "Appended '$NTP_POOL_ENTRY' to $NTP_CONF_PATH (backup at $backup)."
+      else
+        status_fail "Failed to append '$NTP_POOL_ENTRY' to $NTP_CONF_PATH (backup at $backup)."
+      fi
+    else
+      status_fail "Unable to back up $NTP_CONF_PATH to $backup; aborting auto-repair."
+    fi
+  else
+    status_warn "$NTP_CONF_PATH is missing '$NTP_POOL_ENTRY'.
+  Actions: run 'sudo nano $NTP_CONF_PATH' and add the line before other Debian pool entries (see https://upri-earthquake.github.io/issues/rshake-ntp-issue.html), or rerun with NTP_AUTO_REPAIR=1 to append automatically."
+  fi
+}
+
 # --- Main ---------------------------------------------------------------------
 main() {
   log "=== Starting sender pre-install health check ==="
@@ -326,6 +405,8 @@ main() {
   check_filesystem_writable
   check_os_arch
   check_time_sync
+  check_ntp_runtime
+  check_ntp_configuration
 
   log "=== Summary ==="
   if [ "$CRITICAL_FAIL" -ne 0 ]; then

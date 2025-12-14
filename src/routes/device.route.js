@@ -65,6 +65,23 @@ router.use(bodyParser.json())
  */
 router.get('/info', deviceController.getDeviceInfo);
 
+/**
+ * @swagger
+ * /device/config/refresh:
+ *   post:
+ *     summary: Refresh stored device metadata from the Raspberry Shake configuration files
+ *     tags:
+ *       - Device
+ *     responses:
+ *       200:
+ *         description: Successfully refreshed metadata from the host config
+ *       400:
+ *         description: Host config missing or incomplete
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/config/refresh', deviceController.refreshHostMetadata);
+
 
 /** 
  * @swagger

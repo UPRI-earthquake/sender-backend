@@ -167,6 +167,11 @@ async function unlinkDevice(req, res) {
         status: responseCodes.DEVICE_UNLINKING_ERROR,
         message: 'Missing device identifiers needed to unlink remotely.',
       });
+    } else if (error.code === 'RELINK_REQUIRED') {
+      return res.status(409).json({
+        status: responseCodes.DEVICE_RELINK_REQUIRED,
+        message: error.message || 'Device credentials expired. Use Reset Link State to relink this device.',
+      });
     } else {
       return res.status(500).json({
         status: responseCodes.DEVICE_UNLINKING_ERROR,
@@ -197,9 +202,47 @@ async function refreshAccessToken(req, res) {
     });
   } catch (error) {
     console.log(error);
+    if (error?.code === 'RELINK_REQUIRED') {
+      const refreshTokenStatus = await deviceService.getRefreshTokenStatus();
+      return res.status(409).json({
+        status: responseCodes.DEVICE_RELINK_REQUIRED,
+        message: error.message || 'Refresh token unavailable. Relink the device to continue streaming.',
+        payload: {
+          refreshTokenStatus,
+        },
+      });
+    }
     return res.status(500).json({
       status: responseCodes.DEVICE_TOKEN_REFRESH_ERROR,
       message: error?.message || 'Unable to refresh access token',
+    });
+  }
+}
+
+async function refreshHostMetadata(req, res) {
+  try {
+    const refreshed = await deviceService.refreshDeviceMetadataFromHost();
+    return res.status(200).json({
+      status: responseCodes.DEVICE_HOST_CONFIG_REFRESH_SUCCESS,
+      message: responseMessages.DEVICE_HOST_CONFIG_REFRESH_SUCCESS,
+      payload: refreshed,
+    });
+  } catch (error) {
+    console.error('Error refreshing host metadata', error);
+
+    const statusCode = responseCodes.DEVICE_HOST_CONFIG_REFRESH_ERROR;
+    const clientErrors = ['HOST_CONFIG_UNAVAILABLE', 'HOST_CONFIG_EMPTY'];
+
+    if (clientErrors.includes(error.code)) {
+      return res.status(400).json({
+        status: statusCode,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      status: statusCode,
+      message: error?.message || responseMessages.DEVICE_HOST_CONFIG_REFRESH_ERROR,
     });
   }
 }
@@ -210,4 +253,5 @@ module.exports = {
   linkDevice,
   unlinkDevice,
   refreshAccessToken,
+  refreshHostMetadata,
 };

@@ -36,6 +36,25 @@ const defaultDeviceInfo = {
 
 const tokenLeewaySeconds = 300; // refresh tokens 5 minutes before expiry
 const refreshTokenLeewaySeconds = Number(process.env.REFRESH_TOKEN_LEEWAY_SECONDS || 24 * 60 * 60); // default 24h leeway for refresh tokens
+const RELINK_REQUIRED_ERROR_CODE = 'RELINK_REQUIRED';
+
+function formatRelinkMessage(reason) {
+  if (!reason) {
+    return 'Device link expired. Relink the device to continue streaming.';
+  }
+  const trimmed = String(reason).trim();
+  const suffix = trimmed.endsWith('.') ? '' : '.';
+  return `${trimmed}${suffix} Relink the device to continue streaming.`;
+}
+
+function createRelinkRequiredError(reason, meta = {}) {
+  const error = new Error(formatRelinkMessage(reason));
+  error.code = RELINK_REQUIRED_ERROR_CODE;
+  if (meta && typeof meta === 'object' && Object.keys(meta).length > 0) {
+    error.meta = meta;
+  }
+  return error;
+}
 
 function unwrapDeviceInfo(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -339,24 +358,23 @@ async function ensureValidAccessToken() {
 }
 
 async function refreshAuthToken() {
-  const tokenData = await readJsonFile(tokenPath(), createDefaultTokenInfo());
-  if (!tokenData?.refreshToken) {
-    throw new Error('No stored refresh token available to refresh access token');
+  const [tokenData, refreshTokenStatus] = await Promise.all([
+    readJsonFile(tokenPath(), createDefaultTokenInfo()),
+    getRefreshTokenStatus(),
+  ]);
+
+  const refreshToken = tokenData?.refreshToken;
+  const refreshState = refreshTokenStatus?.state;
+  const unusableStates = ['missing', 'invalid', 'expired', 'corrupted'];
+
+  if (!refreshToken || unusableStates.includes(refreshState)) {
+    throw createRelinkRequiredError(
+      refreshTokenStatus?.reason || 'Refresh token unavailable',
+      { refreshTokenStatus },
+    );
   }
 
-  const refreshStatus = describeTokenStatus(tokenData.refreshToken, {
-    missingReason: 'No refresh token saved',
-    invalidReason: 'Unable to decode refresh token',
-    expiredReason: 'Refresh token expired',
-    presentKey: 'refreshTokenPresent',
-    leewaySeconds: refreshTokenLeewaySeconds,
-  });
-
-  if (['missing', 'invalid', 'expired'].includes(refreshStatus.state)) {
-    throw new Error(refreshStatus.reason || 'Refresh token unavailable');
-  }
-
-  const payload = await requestRefreshToken(tokenData.refreshToken);
+  const payload = await requestRefreshToken(refreshToken);
 
   if (!payload?.accessToken) {
     throw new Error('Refresh token response missing access token');
@@ -364,7 +382,7 @@ async function refreshAuthToken() {
 
   await persistTokenPair({
     accessToken: payload.accessToken,
-    refreshToken: payload.refreshToken || tokenData.refreshToken,
+    refreshToken: payload.refreshToken || refreshToken,
     deviceInfo: payload.deviceInfo,
   });
 
@@ -373,16 +391,12 @@ async function refreshAuthToken() {
 
 async function refreshIfExpiringSoon() {
   const tokenData = await readJsonFile(tokenPath(), createDefaultTokenInfo());
-  const status = await getAccessTokenStatus();
-  const refreshStatus = describeTokenStatus(tokenData?.refreshToken, {
-    missingReason: 'No refresh token saved',
-    invalidReason: 'Unable to decode refresh token',
-    expiredReason: 'Refresh token expired',
-    presentKey: 'refreshTokenPresent',
-    leewaySeconds: refreshTokenLeewaySeconds,
-  });
+  const [status, refreshStatus] = await Promise.all([
+    getAccessTokenStatus(),
+    getRefreshTokenStatus(),
+  ]);
 
-  if (['missing', 'invalid', 'expired'].includes(refreshStatus.state)) {
+  if (['missing', 'invalid', 'expired', 'corrupted'].includes(refreshStatus.state)) {
     return null;
   }
 
@@ -432,6 +446,35 @@ async function getDeviceDetails() {
   };
 }
 
+async function refreshDeviceMetadataFromHost() {
+  const hostConfig = normalizeHostConfig(utils.getHostDeviceConfig());
+
+  if (!hostConfig) {
+    const err = new Error('Unable to read RShake host config');
+    err.code = 'HOST_CONFIG_UNAVAILABLE';
+    throw err;
+  }
+
+  const updates = {};
+  const updatableKeys = ['network', 'station', 'longitude', 'latitude', 'elevation', 'streamId'];
+
+  updatableKeys.forEach((key) => {
+    const value = hostConfig[key];
+    if (value !== null && value !== undefined && value !== '') {
+      updates[key] = value;
+    }
+  });
+
+  if (Object.keys(updates).length === 0) {
+    const err = new Error('RShake config missing metadata to import');
+    err.code = 'HOST_CONFIG_EMPTY';
+    throw err;
+  }
+
+  await persistDeviceInfo(updates, { overwrite: false });
+  return getDeviceDetails();
+}
+
 async function getUnlinkIdentifiers() {
   const storedInfo = await getStoredDeviceInfo();
   const hostConfig = normalizeHostConfig(utils.getHostDeviceConfig());
@@ -457,7 +500,7 @@ async function getUnlinkIdentifiers() {
 
 async function requestRefreshToken(refreshToken) {
   if (!refreshToken) {
-    throw new Error('Missing refresh token');
+    throw createRelinkRequiredError('Refresh token missing or unavailable');
   }
 
   const url = `${buildW1BaseUrl()}${refreshPath}`;
@@ -471,6 +514,13 @@ async function requestRefreshToken(refreshToken) {
     return payload; // expect { accessToken, refreshToken?, deviceInfo? }
   } catch (error) {
     console.log(`Refresh token request error: ${error}`);
+    if (error?.code === RELINK_REQUIRED_ERROR_CODE) {
+      throw error;
+    }
+    if (error?.response && [400, 401, 403, 409].includes(error.response.status)) {
+      const reason = error.response?.data?.message || 'Refresh token rejected by Earthquake Hub';
+      throw createRelinkRequiredError(reason, { status: error.response.status });
+    }
     throw error;
   }
 }
@@ -571,6 +621,7 @@ module.exports = {
   persistToken,
   persistTokenPair,
   getDeviceDetails,
+  refreshDeviceMetadataFromHost,
   getStoredDeviceInfo,
   getAccessTokenStatus,
   getRefreshTokenStatus,

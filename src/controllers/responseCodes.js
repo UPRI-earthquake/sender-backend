@@ -17,6 +17,9 @@ const responseCodes = {
   GET_DEVICE_INFO_SUCCESS: 40,
   GET_DEVICE_INFO_ERROR: 140,
 
+  DEVICE_HOST_CONFIG_REFRESH_SUCCESS: 41,
+  DEVICE_HOST_CONFIG_REFRESH_ERROR: 141,
+
   GET_SERVERS_LIST_SUCCESS: 50,
   GET_SERVERS_LIST_ERROR: 150,
 
@@ -53,6 +56,7 @@ const responseCodes = {
   HEALTH_RESOURCES_ERROR: 198,
   DEVICE_TOKEN_REFRESH_SUCCESS: 97,
   DEVICE_TOKEN_REFRESH_ERROR: 197,
+  DEVICE_RELINK_REQUIRED: 199,
 
   STOP_STREAMING_SUCCESS: 30,
   STOP_STREAMING_ERROR: 130,
@@ -68,6 +72,8 @@ const responseMessages = {
 
   GET_DEVICE_INFO_SUCCESS: "Reading device information success",
   GET_DEVICE_INFO_ERROR: "Reading device information error",
+  DEVICE_HOST_CONFIG_REFRESH_SUCCESS: "Device metadata refresh success",
+  DEVICE_HOST_CONFIG_REFRESH_ERROR: "Device metadata refresh error",
 
   GET_SERVERS_LIST_SUCCESS: "Reading servers list information success",
   GET_SERVERS_LIST_ERROR: "Reading servers list information error",
@@ -101,6 +107,7 @@ const responseMessages = {
   HEALTH_RESOURCES_ERROR: "Resource utilization snapshot error",
   DEVICE_TOKEN_REFRESH_SUCCESS: "Access token refresh success",
   DEVICE_TOKEN_REFRESH_ERROR: "Access token refresh error",
+  DEVICE_RELINK_REQUIRED: "Device credentials invalid. Relink required",
 };
 
 module.exports = {

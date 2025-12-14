@@ -42,3 +42,15 @@ The repo root has `docker-compose.dev.yml` that spins up the sender backend and 
    ```
 
 If you prefer running the backend directly on your host instead of inside Docker, set `SLINK2DALIPATH` to a locally built binary (e.g., `./tests2d/slink2dali` after `make`) and `LOCALDBS_DIRECTORY` to a writable path such as `./localDBs`.
+
+### Clock health target
+The `/health/time` endpoint now issues an SNTP query instead of relying on HTTP `Date` headers and will walk a list of hosts until one responds. Configure the target via:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NTP_SERVER_HOST` | `time.google.com` | Primary host queried for time offset. |
+| `NTP_SERVER_HOSTS` | _(empty)_ | Optional comma/space separated fallback hosts (e.g. `time.google.com,0.asia.pool.ntp.org`). Entries can include `host:port`. |
+| `NTP_SERVER_PORT` | `123` | UDP port for the SNTP request. |
+| `NTP_REQUEST_TIMEOUT_MS` | `2000` | Milliseconds before the query aborts. |
+
+Set these in `.env` (or your container environment) if you need to point at a regional NTP source.

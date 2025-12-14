@@ -28,9 +28,15 @@ async function linkingStatusCheck(req, res, next) {
   try {
     await deviceService.ensureValidAccessToken();
   } catch (error) {
+    const relinkRequired = error?.code === 'RELINK_REQUIRED';
     return res.status(409).json({ 
-      status: responseCodes.ADD_SERVER_DEVICE_NOT_YET_LINKED, 
-      message: 'Link your device first before adding a ringserver url' })
+      status: relinkRequired
+        ? responseCodes.DEVICE_RELINK_REQUIRED
+        : responseCodes.ADD_SERVER_DEVICE_NOT_YET_LINKED,
+      message: relinkRequired
+        ? (error.message || 'Device credentials expired. Relink the device before adding a ringserver URL.')
+        : 'Link your device first before adding a ringserver url',
+    });
   }
 
   next(); // Proceed to the next middleware/route handler

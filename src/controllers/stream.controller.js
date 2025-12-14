@@ -1,6 +1,7 @@
-const streamUtils = require('./stream.utils')
-let { streamsObject } = require('./stream.utils')
-const { responseCodes, responseMessages } = require('./responseCodes')
+const streamUtils = require('./stream.utils');
+let { streamsObject } = require('./stream.utils');
+const deviceService = require('../services/device.service');
+const { responseCodes, responseMessages } = require('./responseCodes');
 
 
 // Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.
@@ -29,17 +30,20 @@ async function startStreaming(req, res) {
   console.log('POST Request sent on /stream/start endpoint')
 
   try {
+    await deviceService.ensureValidAccessToken();
     await streamUtils.spawnSlink2dali(req.body.url);
     res.status(200).json({ 
       status: responseCodes.START_STREAMING_SUCCESS,
       message: 'Child Process Spawned Successfully' });
   } catch (error) {
     console.log(`Error spawning slink2dali: ${error}`)
-    const unauthenticated = typeof error?.message === 'string' && error.message.toLowerCase().includes('token');
-    res.status(unauthenticated ? 409 : 500).json({ 
-      status: responseCodes.START_STREAMING_ERROR,
-      message: unauthenticated
-        ? 'Device is not linked or token refresh failed. Relink the device.'
+    const relinkRequired = error?.code === 'RELINK_REQUIRED';
+    res.status(relinkRequired ? 409 : 500).json({ 
+      status: relinkRequired
+        ? responseCodes.DEVICE_RELINK_REQUIRED
+        : responseCodes.START_STREAMING_ERROR,
+      message: relinkRequired
+        ? (error.message || 'Device link expired. Relink the device to resume streaming.')
         : 'Error spawning child process' });
   }
 }
