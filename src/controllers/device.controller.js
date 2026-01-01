@@ -31,7 +31,7 @@ async function linkDevice(req, res) {
   // Input validation schema
   const accountValidationSchema = Joi.object({
     username: Joi.string().required(),
-    password: Joi.string().pattern(new RegExp('^[a-zA-Z0-9]{6,30}$')).required(),
+    password: Joi.string().min(1).max(256).required(),
     longitude: Joi.string()
       .regex(/^[-+]?(?:180(?:\.0{1,6})?|(?:1[0-7]\d|0?\d{1,2})(?:\.\d{1,6})?)$/)
       .required(),
@@ -136,6 +136,12 @@ async function unlinkDevice(req, res) {
 
       const token = await deviceService.ensureValidAccessToken(); // Check/refresh auth token from file
       await deviceService.requestUnlinking(token, unlinkIdentifiers); // send POST request to W1
+      try {
+        await serversService.removeDeviceFromAllBrgyAccounts(token, unlinkIdentifiers.streamId);
+      } catch (cleanupError) {
+        console.log(`Brgy cleanup error during unlink: ${cleanupError}`);
+        // Proceed without failing the unlink; cleanup was best-effort
+      }
     }
 
     await deviceService.clearLocalLinkState();

@@ -1,5 +1,9 @@
 const axios = require('axios');
+const fs = require('fs').promises;
+const path = require('path');
 const { buildW1BaseUrl } = require('./device.service');
+
+const localDbPath = (fileName) => path.join(process.env.LOCALDBS_DIRECTORY || './localDBs', fileName);
 
 async function requestRingserverHostsList() {
   try {
@@ -15,6 +19,20 @@ async function requestRingserverHostsList() {
     throw error; // Send the error to controller
   }
 };
+
+async function readSavedServers() {
+  try {
+    const contents = await fs.readFile(localDbPath('servers.json'), 'utf-8');
+    const parsed = JSON.parse(contents);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed;
+  } catch (error) {
+    console.log(`readSavedServers() error: ${error}`);
+    return [];
+  }
+}
 
 async function removeDeviceFromBrgyAccount(token, brgyUsername, streamId) {
   if (!token) {
@@ -37,11 +55,40 @@ async function removeDeviceFromBrgyAccount(token, brgyUsername, streamId) {
     );
   } catch (error) {
     console.log(`removeDeviceFromBrgyAccount() error: ${error}`);
+    if (error?.response) {
+      const status = error.response.status;
+      // Treat not-found/invalid/role errors as non-fatal so unlink can proceed
+      if ([400, 404].includes(status)) {
+        return null;
+      }
+    }
     throw error;
+  }
+}
+
+async function removeDeviceFromAllBrgyAccounts(token, streamId) {
+  const servers = await readSavedServers();
+  if (!servers.length) return;
+
+  // Deduplicate by institutionName to avoid repeat calls
+  const seen = new Set();
+  for (const server of servers) {
+    const brgyUsername = server?.institutionName;
+    if (!brgyUsername || seen.has(brgyUsername)) {
+      continue;
+    }
+    seen.add(brgyUsername);
+    try {
+      await removeDeviceFromBrgyAccount(token, brgyUsername, streamId);
+    } catch (error) {
+      // Best-effort: continue other brgy accounts while logging
+      console.log(`removeDeviceFromAllBrgyAccounts() error for ${brgyUsername}: ${error}`);
+    }
   }
 }
 
 module.exports = {
   requestRingserverHostsList,
   removeDeviceFromBrgyAccount,
+  removeDeviceFromAllBrgyAccounts,
 };
