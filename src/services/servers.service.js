@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { buildW1BaseUrl } = require('./device.service');
 
 async function requestRingserverHostsList() {
   try {
@@ -15,6 +16,32 @@ async function requestRingserverHostsList() {
   }
 };
 
+async function removeDeviceFromBrgyAccount(token, brgyUsername, streamId) {
+  if (!token) {
+    const err = new Error('Missing access token for device removal');
+    err.code = 'MISSING_TOKEN';
+    throw err;
+  }
+  if (!brgyUsername || !streamId) {
+    const err = new Error('Missing brgyUsername or streamId for device removal');
+    err.code = 'MISSING_PARAMS';
+    throw err;
+  }
+
+  const url = `${buildW1BaseUrl()}/accounts/brgy/remove-device`;
+  try {
+    return await axios.post(
+      url,
+      { brgyUsername, streamId },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+  } catch (error) {
+    console.log(`removeDeviceFromBrgyAccount() error: ${error}`);
+    throw error;
+  }
+}
+
 module.exports = {
   requestRingserverHostsList,
+  removeDeviceFromBrgyAccount,
 };

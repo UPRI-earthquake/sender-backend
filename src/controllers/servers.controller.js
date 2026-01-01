@@ -112,6 +112,35 @@ async function removeServer(req, res) {
       });
     }
 
+    // Attempt remote cleanup on the associated brgy account
+    const targetServer = existingServers[index] || {};
+    const brgyUsername = targetServer.institutionName;
+    const { streamId } = await deviceService.getStoredDeviceInfo();
+    if (brgyUsername && streamId) {
+      try {
+        const token = await deviceService.ensureValidAccessToken();
+        await serversService.removeDeviceFromBrgyAccount(token, brgyUsername, streamId);
+      } catch (error) {
+        console.log(`Error removing device from brgy account ${brgyUsername}: ${error}`);
+        if (error?.code === 'RELINK_REQUIRED') {
+          return res.status(409).json({
+            status: responseCodes.DEVICE_RELINK_REQUIRED,
+            message: error.message || responseMessages.DEVICE_RELINK_REQUIRED,
+          });
+        }
+        if (error?.response) {
+          return res.status(error.response.status).json({
+            status: responseCodes.REMOVE_SERVER_ERROR,
+            message: error.response?.data?.message || 'Error removing device from brgy account',
+          });
+        }
+        return res.status(500).json({
+          status: responseCodes.REMOVE_SERVER_ERROR,
+          message: 'Error removing device from brgy account',
+        });
+      }
+    }
+
     existingServers.splice(index, 1);
     await fs.writeFile(filePath, JSON.stringify(existingServers));
     await streamUtils.removeStream(url);
