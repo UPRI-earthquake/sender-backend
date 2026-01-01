@@ -2,11 +2,19 @@ const deviceService = require('../services/device.service');
 const streamUtils = require('./stream.utils');
 const Joi = require('joi');
 const { responseCodes, responseMessages } = require('./responseCodes');
+const serversService = require('../services/servers.service');
 
 // Function for getting the information of the device saved in local file store
 async function getDeviceInfo(req, res) {
   try {
-    const { deviceInfo, hostConfig, linked, tokenStatus, refreshTokenStatus } = await deviceService.getDeviceDetails();
+    const {
+      deviceInfo,
+      hostConfig,
+      linked,
+      tokenStatus,
+      refreshTokenStatus,
+      linkState,
+    } = await deviceService.getDeviceDetails();
 
     res.status(200).json({ 
       status: responseCodes.GET_DEVICE_INFO_SUCCESS,
@@ -17,6 +25,7 @@ async function getDeviceInfo(req, res) {
         hostConfig,
         tokenStatus,
         refreshTokenStatus,
+        linkState,
       }});
   } catch (error) {
     console.error(`Error reading file: ${error}`);
@@ -189,6 +198,95 @@ async function unlinkDevice(req, res) {
   }
 };
 
+async function resetLinkState(req, res) {
+  let localCleared = false;
+  let unlinkIdentifiers = null;
+  let streamsCleared = false;
+
+  try {
+    unlinkIdentifiers = await deviceService.getUnlinkIdentifiers();
+
+    if (!unlinkIdentifiers?.streamId || !unlinkIdentifiers?.macAddress) {
+      return res.status(400).json({
+        status: responseCodes.DEVICE_RESET_ERROR,
+        message: 'Missing device identifiers needed to reset link state.',
+      });
+    }
+
+    const clearedStreams = await streamUtils.clearStreamsObject();
+    if (clearedStreams !== 'success') {
+      throw new Error('Clearing streams object failed');
+    }
+    streamsCleared = true;
+
+    const token = await deviceService.ensureValidAccessToken();
+
+    await deviceService.clearLocalLinkState();
+    localCleared = true;
+
+    await deviceService.requestLinkReset(token, unlinkIdentifiers);
+
+    return res.status(200).json({
+      status: responseCodes.DEVICE_RESET_SUCCESS,
+      message: 'Device link and registration reset. Re-register to continue.',
+    });
+  } catch (error) {
+    console.log(error);
+
+    if (!streamsCleared) {
+      try {
+        await streamUtils.clearStreamsObject();
+        streamsCleared = true;
+      } catch (cleanupError) {
+        console.log(cleanupError);
+      }
+    }
+
+    if (!localCleared) {
+      try {
+        await deviceService.clearLocalLinkState();
+        localCleared = true;
+      } catch (cleanupError) {
+        console.log(cleanupError);
+      }
+    }
+
+    if (error.response) {
+      return res.status(error.response.status).json({
+        status: responseCodes.DEVICE_RESET_EHUB_ERROR,
+        message: error.response?.data?.message
+          || 'Error from earthquake-hub while resetting link state',
+      });
+    }
+
+    if (error.code === 'MISSING_RESET_IDENTIFIERS') {
+      return res.status(400).json({
+        status: responseCodes.DEVICE_RESET_ERROR,
+        message: 'Missing device identifiers needed to reset link state.',
+      });
+    }
+
+    if (error.code === 'RELINK_REQUIRED') {
+      return res.status(409).json({
+        status: responseCodes.DEVICE_RELINK_REQUIRED,
+        message: error.message || 'Device credentials expired. Relink before resetting link state.',
+      });
+    }
+
+    if (error.message === 'Clearing streams object failed') {
+      return res.status(500).json({
+        status: responseCodes.DEVICE_RESET_ERROR,
+        message: 'Unable to stop existing streams before resetting link.',
+      });
+    }
+
+    return res.status(500).json({
+      status: responseCodes.DEVICE_RESET_ERROR,
+      message: 'Reset failed before completing cleanup.',
+    });
+  }
+}
+
 // Manual token refresh (bypass scheduler)
 async function refreshAccessToken(req, res) {
   try {
@@ -258,6 +356,7 @@ module.exports = {
   getDeviceInfo, 
   linkDevice,
   unlinkDevice,
+  resetLinkState,
   refreshAccessToken,
   refreshHostMetadata,
 };

@@ -231,6 +231,21 @@ router.post('/link', deviceController.linkDevice)
  */
 router.post('/unlink', deviceController.unlinkDevice)
 
+/**
+ * @swagger
+ * /device/reset-link:
+ *   post:
+ *     summary: Reset local state and remove the device record from Earthquake Hub
+ *     tags:
+ *       - Device
+ *     responses:
+ *       200:
+ *         description: Device reset request succeeded
+ *       500:
+ *         description: Reset failed
+ */
+router.post('/reset-link', deviceController.resetLinkState)
+
 router.post('/refresh-token', deviceController.refreshAccessToken)
 
 module.exports = router;

@@ -315,6 +315,22 @@
         }
       }
     },
+    "/device/reset-link": {
+      "post": {
+        "summary": "Reset local state and remove the device record from Earthquake Hub",
+        "tags": [
+          "Device"
+        ],
+        "responses": {
+          "200": {
+            "description": "Device reset request succeeded"
+          },
+          "500": {
+            "description": "Reset failed"
+          }
+        }
+      }
+    },
     "/servers/ringserver-hosts": {
       "get": {
         "summary": "Get list of valid ringserver hosts registered in W1",

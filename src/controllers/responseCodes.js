@@ -64,6 +64,9 @@ const responseCodes = {
   DEVICE_UNLINKING_SUCCESS: 20,
   DEVICE_UNLINKING_ERROR: 120,
   DEVICE_UNLINKING_EHUB_ERROR: 121,
+  DEVICE_RESET_SUCCESS: 21,
+  DEVICE_RESET_ERROR: 122,
+  DEVICE_RESET_EHUB_ERROR: 123,
 };
 
 const responseMessages = {
@@ -108,6 +111,9 @@ const responseMessages = {
   DEVICE_TOKEN_REFRESH_SUCCESS: "Access token refresh success",
   DEVICE_TOKEN_REFRESH_ERROR: "Access token refresh error",
   DEVICE_RELINK_REQUIRED: "Device credentials invalid. Relink required",
+  DEVICE_RESET_SUCCESS: "Device reset success",
+  DEVICE_RESET_ERROR: "Device reset error",
+  DEVICE_RESET_EHUB_ERROR: "Device reset error from earthquakehub",
 };
 
 module.exports = {

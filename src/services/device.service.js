@@ -37,6 +37,7 @@ const defaultDeviceInfo = {
 const tokenLeewaySeconds = 300; // refresh tokens 5 minutes before expiry
 const refreshTokenLeewaySeconds = Number(process.env.REFRESH_TOKEN_LEEWAY_SECONDS || 24 * 60 * 60); // default 24h leeway for refresh tokens
 const RELINK_REQUIRED_ERROR_CODE = 'RELINK_REQUIRED';
+const deviceStatusPath = '/device/status';
 
 function formatRelinkMessage(reason) {
   if (!reason) {
@@ -437,12 +438,23 @@ async function getDeviceDetails() {
     streamId: storedInfo.streamId || hostConfig.streamId,
   };
 
+  let linkState = 'unknown';
+  if (mergedDevice.network && mergedDevice.station) {
+    try {
+      const { state } = await fetchRemoteLinkState(mergedDevice.network, mergedDevice.station);
+      linkState = state;
+    } catch (error) {
+      console.log(`Remote link state lookup failed: ${error}`);
+    }
+  }
+
   return {
     deviceInfo: mergedDevice,
     hostConfig,
     linked: Boolean(storedInfo.streamId && token?.accessToken),
     tokenStatus,
     refreshTokenStatus,
+    linkState,
   };
 }
 
@@ -612,6 +624,45 @@ async function requestUnlinking(token, unlinkDetails) {
   }
 };
 
+async function requestLinkReset(token, resetDetails) {
+  try {
+    const streamId = resetDetails?.streamId;
+    const macAddress = resetDetails?.macAddress || utils.read_mac_address();
+
+    if (!streamId || !macAddress) {
+      const missing = [];
+      if (!streamId) missing.push('streamId');
+      if (!macAddress) missing.push('macAddress');
+      const err = new Error(`Missing reset identifiers: ${missing.join(', ')}`);
+      err.code = 'MISSING_RESET_IDENTIFIERS';
+      throw err;
+    }
+
+    const json = {
+      macAddress,
+      streamId,
+    };
+    const url = `${buildW1BaseUrl()}/device/reset-link`;
+
+    const axiosConfig = {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    };
+
+    if (process.env.NODE_ENV === 'production') {
+      axiosConfig.httpsAgent = httpsAgent;
+    }
+
+    const response = await axios.post(url, json, axiosConfig);
+
+    return response.data?.payload || 'success';
+  } catch (error) {
+    console.log(`Link reset request error: ${error}`);
+    throw error;
+  }
+};
+
 module.exports = {
   checkAuthToken,
   ensureValidAccessToken,
@@ -628,6 +679,34 @@ module.exports = {
   getUnlinkIdentifiers,
   requestLinking,
   requestUnlinking,
+  requestLinkReset,
   refreshAuthToken,
   buildW1BaseUrl,
+  fetchRemoteLinkState,
 };
+
+async function fetchRemoteLinkState(network, station) {
+  if (!network || !station) {
+    return { state: 'unknown' };
+  }
+
+  const url = `${buildW1BaseUrl()}${deviceStatusPath}?network=${encodeURIComponent(network)}&station=${encodeURIComponent(station)}`;
+  const axiosConfig = {};
+  if (process.env.NODE_ENV === 'production') {
+    axiosConfig.httpsAgent = httpsAgent;
+  }
+
+  try {
+    const response = await axios.get(url, axiosConfig);
+    const activity = response?.data?.payload?.activity || response?.data?.payload?.status || null;
+    if (activity === 'unlinked') {
+      return { state: 'unlinked' };
+    }
+    return { state: 'linked' };
+  } catch (error) {
+    if (error?.response && error.response.status === 400) {
+      return { state: 'notLinked' };
+    }
+    return { state: 'unknown' };
+  }
+}
