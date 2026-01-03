@@ -219,7 +219,12 @@ async function resetLinkState(req, res) {
     }
     streamsCleared = true;
 
-    const token = await deviceService.ensureValidAccessToken();
+    let token = null;
+    try {
+      token = await deviceService.ensureValidAccessToken();
+    } catch (tokenErr) {
+      console.log('Valid access token unavailable for reset, continuing without bearer token:', tokenErr.message);
+    }
 
     await deviceService.clearLocalLinkState();
     localCleared = true;

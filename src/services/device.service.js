@@ -644,11 +644,10 @@ async function requestLinkReset(token, resetDetails) {
     };
     const url = `${buildW1BaseUrl()}/device/reset-link`;
 
-    const axiosConfig = {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    };
+    const axiosConfig = { headers: {} };
+    if (token) {
+      axiosConfig.headers.Authorization = `Bearer ${token}`;
+    }
 
     if (process.env.NODE_ENV === 'production') {
       axiosConfig.httpsAgent = httpsAgent;
