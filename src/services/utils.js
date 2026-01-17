@@ -1,7 +1,25 @@
 const fs = require('fs');
+const path = require('path');
 
-const settingsRoot = process.env.RSHAKE_SETTINGS_PATH || '/opt/settings';
+// Resolve the root of the RShake settings tree. On-device this is /opt/settings.
+// In dev we fall back to the bundled fixtures at dev/settings (mirrors /opt/settings).
+function resolveSettingsRoot() {
+  const configured = process.env.RSHAKE_SETTINGS_PATH || '/opt/settings';
+  if (fs.existsSync(configured)) {
+    return configured;
+  }
+
+  const devFallback = path.resolve(__dirname, '../../dev/settings');
+  if (fs.existsSync(devFallback)) {
+    return devFallback;
+  }
+
+  return configured;
+}
+
+const settingsRoot = resolveSettingsRoot();
 const settingsSysPath = `${settingsRoot}/sys`;
+const settingsConfigPath = `${settingsRoot}/config`;
 
 function read_mac_address() {
   try {
@@ -36,6 +54,65 @@ function read_station() {
 function read_coordinates() {
   const coordinates = { longitude: null, latitude: null, elevation: null };
 
+  // Preferred order: config/config.json (dataSharing), config/MD-info.json (GeoLocation),
+  // station.xml (written by RShake OS), then legacy per-axis text files in sys/.
+  const coerceNumber = (value) => {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    const numeric = Number(value);
+    return Number.isNaN(numeric) ? null : numeric;
+  };
+
+  const assignIfMissing = (key, value) => {
+    if (coordinates[key] !== null && coordinates[key] !== undefined) {
+      return;
+    }
+    const numeric = coerceNumber(value);
+    if (numeric !== null) {
+      coordinates[key] = numeric;
+    }
+  };
+
+  const pickFromContainer = (container, keys) => {
+    for (const key of keys) {
+      if (container && Object.prototype.hasOwnProperty.call(container, key)) {
+        const candidate = container[key];
+        if (candidate !== null && candidate !== undefined && candidate !== '') {
+          return candidate;
+        }
+      }
+    }
+    return null;
+  };
+
+  const configCandidates = [
+    { path: `${settingsConfigPath}/config.json`, selector: (data) => data?.dataSharing || data },
+    { path: `${settingsConfigPath}/MD-info.json`, selector: (data) => data?.location || data?.dataSharing || data },
+  ];
+
+  for (const source of configCandidates) {
+    try {
+      if (!fs.existsSync(source.path)) {
+        continue;
+      }
+
+      const contents = fs.readFileSync(source.path, 'utf8');
+      const parsed = JSON.parse(contents);
+      const container = source.selector ? source.selector(parsed) : parsed;
+
+      assignIfMissing('longitude', pickFromContainer(container, ['lon', 'longitude', 'lng', 'long']));
+      assignIfMissing('latitude', pickFromContainer(container, ['lat', 'latitude']));
+      assignIfMissing('elevation', pickFromContainer(container, ['elevation', 'elev', 'altitude', 'alt']));
+
+      if (coordinates.longitude !== null && coordinates.latitude !== null && coordinates.elevation !== null) {
+        break;
+      }
+    } catch (error) {
+      console.log(error);
+    }
+  }
+
   // Try parsing station.xml first (preferred source produced by RShake OS)
   const stationXmlCandidates = [
     `${settingsRoot}/station.xml`,
@@ -44,22 +121,23 @@ function read_coordinates() {
 
   for (const xmlPath of stationXmlCandidates) {
     try {
+      if (!fs.existsSync(xmlPath)) {
+        continue;
+      }
+
       const xml = fs.readFileSync(xmlPath, 'utf8');
       const lonMatch = xml.match(/<Longitude>\s*([-+]?\d+\.?\d*)\s*<\/Longitude>/i);
       const latMatch = xml.match(/<Latitude>\s*([-+]?\d+\.?\d*)\s*<\/Latitude>/i);
       const elevMatch = xml.match(/<Elevation>\s*([-+]?\d+\.?\d*)\s*<\/Elevation>/i);
 
       if (lonMatch) {
-        const lon = parseFloat(lonMatch[1]);
-        coordinates.longitude = Number.isNaN(lon) ? null : lon;
+        assignIfMissing('longitude', parseFloat(lonMatch[1]));
       }
       if (latMatch) {
-        const lat = parseFloat(latMatch[1]);
-        coordinates.latitude = Number.isNaN(lat) ? null : lat;
+        assignIfMissing('latitude', parseFloat(latMatch[1]));
       }
       if (elevMatch) {
-        const elev = parseFloat(elevMatch[1]);
-        coordinates.elevation = Number.isNaN(elev) ? null : elev;
+        assignIfMissing('elevation', parseFloat(elevMatch[1]));
       }
 
       break; // Stop after first readable station.xml
@@ -77,10 +155,9 @@ function read_coordinates() {
 
   fallbacks.forEach(({ key, path }) => {
     try {
-      if (coordinates[key] === null) {
+      if (coordinates[key] === null && fs.existsSync(path)) {
         const value = fs.readFileSync(path, 'utf8').trim();
-        const numeric = parseFloat(value);
-        coordinates[key] = Number.isNaN(numeric) ? null : numeric;
+        assignIfMissing(key, value);
       }
     } catch (error) {
       console.log(error);

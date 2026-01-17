@@ -1,0 +1,26 @@
+{
+  "Station": {
+    "net": "AM",
+    "stn": "RE722",
+    "loc": "00",
+    "chn": "E[HZ,NZ,NN,NE]"
+  },
+  "GeoLocation": {
+    "lat": 14.5995,
+    "lon": 121.0424,
+    "elev": 42.75,
+    "FloorInstalled": 2,
+    "FloorsTotal": 5
+  },
+  "Versions": {
+    "g-phonetype": "RSHAKE",
+    "boomFilter": 1
+  },
+  "User": {
+    "nameF": "Dev",
+    "nameL": "Operator",
+    "email": "dev-operator@example.com",
+    "purpose": "Testing",
+    "boomPurpose": ""
+  }
+}

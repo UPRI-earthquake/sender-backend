@@ -25,8 +25,8 @@ services:
       # bind local dir to reflect changes in container
       # NOTE: includes everything, including all those in .dockerignore, specifically .env
       - ./:/app/dev
-      # Bind mount the host's /dev directory to the container's /opt/settings/sys/
-      - ./dev:/opt/settings/sys
+      # Bind mount a realistic RShake settings tree for dev (/opt/settings/{sys,config,...})
+      - ./dev/settings:/opt/settings
       - localDBs:/app/localDBs
     expose:
       - "5001"

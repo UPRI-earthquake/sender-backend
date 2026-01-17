@@ -41,6 +41,11 @@ The repo root has `docker-compose.dev.yml` that spins up the sender backend and 
    curl http://localhost:5001/device/info
    ```
 
+### RShake settings fixtures for dev
+- `dev/settings` mirrors the `/opt/settings` layout of an RShake (including `sys` files plus `config/config.json` and `config/MD-info.json` from the screenshots). The compose file mounts this tree to `/opt/settings`, matching the default `RSHAKE_SETTINGS_PATH`.
+- Update those fixtures if you need to test different coordinates or station IDs; the backend will read from `config.json`/`MD-info.json` first and fall back to `sys` text files and `station.xml`.
+- When running the backend directly on your host, point `RSHAKE_SETTINGS_PATH` at `./dev/settings` so the same fixtures are used outside Docker.
+
 If you prefer running the backend directly on your host instead of inside Docker, set `SLINK2DALIPATH` to a locally built binary (e.g., `./tests2d/slink2dali` after `make`) and `LOCALDBS_DIRECTORY` to a writable path such as `./localDBs`.
 
 ### Clock health target
