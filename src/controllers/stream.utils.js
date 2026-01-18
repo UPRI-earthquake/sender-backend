@@ -68,6 +68,7 @@ async function initializeStreamsObject() {
           attemptLogs: {},
           attemptId: 0,
           activeAttemptId: null,
+          lastSuccessTs: null,
         };
       }
     });
@@ -122,9 +123,13 @@ async function reconcileStreamsWithFile() {
         attemptLogs: {},
         attemptId: 0,
         activeAttemptId: null,
+        lastSuccessTs: null,
       };
     } else if (institutionName && !streamsObject[url].institutionName) {
       streamsObject[url].institutionName = institutionName;
+    }
+    if (!Object.prototype.hasOwnProperty.call(streamsObject[url], 'lastSuccessTs')) {
+      streamsObject[url].lastSuccessTs = null;
     }
   });
 
@@ -157,11 +162,15 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
     streamEntry.logs = [];
     streamEntry.attemptLogs = {};
     streamEntry.activeAttemptId = null;
+    streamEntry.lastSuccessTs = Date.now();
   }
   
   // Set status based on number of spawn retries
   if (streamEntry.retryCount === 0) {
     streamEntry.status = 'Streaming';
+    if (!resetFlag && !streamEntry.lastSuccessTs) {
+      streamEntry.lastSuccessTs = Date.now();
+    }
   } else if (streamEntry.retryCount <= 3) {
     streamEntry.status = 'Connecting';
   } else {
@@ -169,6 +178,26 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
   }
 
   return streamEntry;
+}
+
+async function markStreamHealthy(url, childProcess) {
+  await getStreamsObject();
+  const streamEntry = streamsObject[url];
+  if (!streamEntry) {
+    return null;
+  }
+
+  const alreadyStreaming = streamEntry.status === 'Streaming' && streamEntry.retryCount === 0;
+  if (alreadyStreaming) {
+    streamEntry.lastSuccessTs = streamEntry.lastSuccessTs || Date.now();
+    return streamEntry;
+  }
+
+  const updated = await updateStreamStatus(url, childProcess, false, true);
+  if (updated && !updated.lastSuccessTs) {
+    updated.lastSuccessTs = Date.now();
+  }
+  return updated;
 }
 
 // Function for adding new stream to streamsObject dictionary
@@ -187,6 +216,7 @@ async function addNewStream(url, institutionName) {
     attemptLogs: {},
     attemptId: 0,
     activeAttemptId: null,
+    lastSuccessTs: null,
   };
   console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
 }
@@ -244,6 +274,7 @@ async function spawnSlink2dali(receiver_ringserver) {
         attemptLogs: {},
         attemptId: 0,
         activeAttemptId: null,
+        lastSuccessTs: null,
       };
     }
 
@@ -322,21 +353,33 @@ async function spawnSlink2dali(receiver_ringserver) {
     // Listen for 'stdout' event from the child process
     childProcess.stdout.on('data', async (data) => {
       const message = data.toString();
+      const normalizedMessage = message.toLowerCase();
       if (verboseSlinkLogs) {
         console.log(`Command output: ${message.trim()}`); // Log output from slink2dali  
       }
 
-      // Listen for 'error' in slink2dali logs
-      if (message.toLowerCase().includes('error') || message.toLowerCase().includes('unauth')) {
+      const hasErrorKeyword = normalizedMessage.includes('error') || normalizedMessage.includes('unauth');
+      const isRetryLog = normalizedMessage.includes('re-connecting') || normalizedMessage.includes('trying again') || normalizedMessage.includes('retry');
+      const hasHealthySignal =
+        normalizedMessage.includes('write_success') ||
+        normalizedMessage.includes('successfully') ||
+        normalizedMessage.includes(' version') ||
+        normalizedMessage.includes('connected to datalink') ||
+        normalizedMessage.includes('keep alive') ||
+        normalizedMessage.includes('packet');
+
+      if (hasErrorKeyword) {
         console.error('Error encountered in slink2dali logs');
         appendStreamLog(receiver_ringserver, message);
         // Set the error flag to true
         hasError = true;
       }
-      
-      // Listen for 'WRITE_SUCCESS' in slink2dali logs
-      if (message.includes('WRITE_SUCCESS')) {
-        await updateStreamStatus(receiver_ringserver, childProcess, false, true); // Reset the retryCount to 0
+      else if (hasHealthySignal || (!isRetryLog && normalizedMessage.trim())) {
+        try {
+          await markStreamHealthy(receiver_ringserver, childProcess); // Reset the retryCount to 0 and mark streaming
+        } catch (markError) {
+          console.log(`Unable to mark ${receiver_ringserver} healthy: ${markError}`);
+        }
       }
     });
 

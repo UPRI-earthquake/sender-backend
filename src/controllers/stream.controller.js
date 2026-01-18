@@ -58,6 +58,10 @@ async function getStreamingStatus(req, res) {
 
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
+      const streamEntry = streamsObject[url];
+      if (streamEntry.retryCount === 0 && streamEntry.childProcess && !streamEntry.childProcess.killed && streamEntry.status !== 'Streaming') {
+        await streamUtils.updateStreamStatus(url, streamEntry.childProcess, false, true);
+      }
       const { status, institutionName, retryCount, logs } = streamsObject[url];
       outputObject[url] = { status, institutionName, retryCount, logs: logs || [] };
     }
