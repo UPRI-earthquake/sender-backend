@@ -221,6 +221,7 @@ async function resetLinkState(req, res) {
   let localCleared = false;
   let unlinkIdentifiers = null;
   let streamsCleared = false;
+  let remoteResetOutcome = { attempted: false, success: false };
 
   try {
     unlinkIdentifiers = await deviceService.getUnlinkIdentifiers();
@@ -248,11 +249,41 @@ async function resetLinkState(req, res) {
     await deviceService.clearLocalLinkState();
     localCleared = true;
 
-    await deviceService.requestLinkReset(token, unlinkIdentifiers);
+    try {
+      remoteResetOutcome.attempted = true;
+      await deviceService.requestLinkReset(token, unlinkIdentifiers);
+      remoteResetOutcome.success = true;
+    } catch (remoteErr) {
+      remoteResetOutcome.error = remoteErr;
+
+      // If we already cleared local state, treat "auth required" or "not found" as non-fatal:
+      // - auth required: common when upgrading from older deployments with invalid/missing tokens
+      // - not found: device record already removed remotely
+      const status = remoteErr?.response?.status;
+      const remoteMessage = remoteErr?.response?.data?.message;
+      if (localCleared && (status === 401 || status === 404)) {
+        return res.status(200).json({
+          status: responseCodes.DEVICE_RESET_SUCCESS,
+          message: status === 401
+            ? 'Local link state cleared. Remote reset requires signing in as the linked account. Use Link Device to link this device again.'
+            : 'Local link state cleared. Device record not found on Earthquake Hub. Use Link Device to link this device again.',
+          payload: {
+            remoteReset: false,
+            remoteStatus: status,
+            remoteMessage: remoteMessage || null,
+          },
+        });
+      }
+
+      throw remoteErr;
+    }
 
     return res.status(200).json({
       status: responseCodes.DEVICE_RESET_SUCCESS,
-      message: 'Device link and registration reset. Re-register to continue.',
+      message: 'Device link reset. Use Link Device to link this device again.',
+      payload: {
+        remoteReset: true,
+      },
     });
   } catch (error) {
     console.log(error);
@@ -280,6 +311,12 @@ async function resetLinkState(req, res) {
         status: responseCodes.DEVICE_RESET_EHUB_ERROR,
         message: error.response?.data?.message
           || 'Error from earthquake-hub while resetting link state',
+        payload: remoteResetOutcome.attempted
+          ? {
+            remoteReset: false,
+            remoteStatus: error.response.status,
+          }
+          : undefined,
       });
     }
 
