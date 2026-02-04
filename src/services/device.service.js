@@ -10,7 +10,6 @@ const tokenPath = () => localDbPath('token.json');
 const deviceInfoPath = () => localDbPath('deviceInfo.json');
 const serversPath = () => localDbPath('servers.json');
 
-const refreshIntervalMs = Number(process.env.REFRESH_CHECK_INTERVAL_MS || 15 * 60 * 1000); // default 15 minutes
 const refreshLeewayMs = Number(process.env.REFRESH_EXPIRY_LEEWAY_MS || 10 * 60 * 1000); // default 10 minutes
 const refreshPath = process.env.W1_REFRESH_PATH || '/device/refresh-token';
 
@@ -567,9 +566,9 @@ async function requestLinking(userInput) {
     };
     const url = `${buildW1BaseUrl()}/device/link`;
 
-    const response = await axios.post(url, json, {
-      httpsAgent,
-    })
+	    const response = await axios.post(url, json, {
+	      httpsAgent,
+	    });
 
     const payload = extractPayload(response.data);
     if (!payload || typeof payload !== 'object') {

@@ -48,6 +48,13 @@ app.use('/health', healthRouter)
 
 // Proactive token refresh scheduler
 let refreshTimer = null;
+const clearRefreshTimer = () => {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+};
+
 const scheduleRefresh = async () => {
   try {
     await refreshIfExpiringSoon();
@@ -58,7 +65,21 @@ const scheduleRefresh = async () => {
     refreshTimer = setTimeout(scheduleRefresh, interval);
   }
 };
-scheduleRefresh();
+
+if (process.env.NODE_ENV !== 'test') {
+  scheduleRefresh();
+
+  const handleShutdownSignal = (signal) => {
+    console.log(`Received ${signal}, clearing proactive token refresh timer.`);
+    clearRefreshTimer();
+    // Re-emit so default shutdown behaviour still happens.
+    process.kill(process.pid, signal);
+  };
+
+  process.once('SIGINT', () => handleShutdownSignal('SIGINT'));
+  process.once('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+  process.once('exit', clearRefreshTimer);
+}
 
 /* Error handler middleware */
 app.use((err, req, res, next) => {

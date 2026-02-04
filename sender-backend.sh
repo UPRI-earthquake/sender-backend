@@ -12,6 +12,8 @@ UPDATE_TIMER="sender-backend-update.timer"
 UPDATE_SERVICE_FILE="/lib/systemd/system/$UPDATE_SERVICE"
 UPDATE_TIMER_FILE="/lib/systemd/system/$UPDATE_TIMER"
 
+# Optional: set SENDER_BACKEND_DNS (e.g., 8.8.8.8) to override container DNS resolution.
+
 ## INSTALLATION FUNCTIONS
 
 function install_service() {
@@ -195,29 +197,34 @@ function create_container() {
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Container $CONTAINER already exists."
         return 0 # Success
-    else
-        # get IP of rshake accessible from within the container
-        local host_ip=`ip addr show docker0 | grep -Po 'inet \K[\d.]+' | head -n 1`
-        # set domain name on which host_ip will be accessible from within container
-        local in_docker_hostname="docker-host"
-        # create container
-        # TODO: Change W1_PROD_IP to earthquake-hub domain /api (for production)
-        docker create \
-            --name "$CONTAINER" \
-            --add-host "$in_docker_hostname:$host_ip" \
+	    else
+	        # get IP of rshake accessible from within the container
+	        local host_ip=`ip addr show docker0 | grep -Po 'inet \K[\d.]+' | head -n 1`
+	        # set domain name on which host_ip will be accessible from within container
+	        local in_docker_hostname="docker-host"
+	        local dns_flag=()
+	        if [[ -n "$SENDER_BACKEND_DNS" ]]; then
+	            dns_flag=(--dns "$SENDER_BACKEND_DNS")
+	        fi
+	        # create container
+	        # TODO: Change W1_PROD_IP to earthquake-hub domain /api (for production)
+	        docker create \
+	            --name "$CONTAINER" \
+	            --add-host "$in_docker_hostname:$host_ip" \
             --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \
             --volume /opt/settings:/opt/settings:ro \
             --volume "$VOLUME":/app/localDBs \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
             --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
-            --log-driver json-file \
-            --log-opt max-size=10m \
-            --log-opt max-file=3 \
-            --net UPRI-docker-network \
-            "$IMAGE"
-            # 1st volume: workaround for docker's oci runtime error
-            # 2nd volume: contains NET and STAT info
-            # 3rd volume: will contain local file storage of sender-backend server
+	            --log-driver json-file \
+	            --log-opt max-size=10m \
+	            --log-opt max-file=3 \
+	            "${dns_flag[@]}" \
+	            --net UPRI-docker-network \
+	            "$IMAGE"
+	            # 1st volume: workaround for docker's oci runtime error
+	            # 2nd volume: contains NET and STAT info
+	            # 3rd volume: will contain local file storage of sender-backend server
             # net should make sender-backend be accessible by name from frontend
 
         if [[ $? -eq 0 ]]; then

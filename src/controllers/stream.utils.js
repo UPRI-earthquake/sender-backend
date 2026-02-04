@@ -10,6 +10,20 @@ let streamsObject = {};
 const verboseSlinkLogs = process.env.SLINK2DALI_VERBOSE_LOGS === 'true';
 const slinkVerbosityFlag = process.env.SLINK2DALI_VERBOSITY || '-v';
 
+function createStreamEntry(institutionName, status = 'Not Streaming') {
+  return {
+    institutionName: institutionName || null,
+    childProcess: null,
+    status,
+    retryCount: 0,
+    logs: [],
+    attemptLogs: {},
+    attemptId: 0,
+    activeAttemptId: null,
+    lastSuccessTs: null,
+  };
+}
+
 async function readServersFile() {
   try {
     const jsonString = await fs.promises.readFile(`${localStoreDir()}/servers.json`, 'utf-8');
@@ -59,17 +73,7 @@ async function initializeStreamsObject() {
       const { url, institutionName } = server;
       if (!streamsObject[url]) {
         // Add the server to StreamsObject if it's a unique URL
-        streamsObject[url] = {
-          institutionName: institutionName,
-          childProcess: null,
-          status: 'Not Streaming',
-          retryCount: 0,
-          logs: [],
-          attemptLogs: {},
-          attemptId: 0,
-          activeAttemptId: null,
-          lastSuccessTs: null,
-        };
+        streamsObject[url] = createStreamEntry(institutionName, 'Not Streaming');
       }
     });
 
@@ -114,17 +118,7 @@ async function reconcileStreamsWithFile() {
   // Ensure each entry from servers.json exists in the cache
   serversList.forEach(({ url, institutionName }) => {
     if (!streamsObject[url]) {
-      streamsObject[url] = {
-        institutionName,
-        childProcess: null,
-        status: 'Not Streaming',
-        retryCount: 0,
-        logs: [],
-        attemptLogs: {},
-        attemptId: 0,
-        activeAttemptId: null,
-        lastSuccessTs: null,
-      };
+      streamsObject[url] = createStreamEntry(institutionName, 'Not Streaming');
     } else if (institutionName && !streamsObject[url].institutionName) {
       streamsObject[url].institutionName = institutionName;
     }
@@ -207,34 +201,26 @@ async function addNewStream(url, institutionName) {
     console.log(`streamsObject reinitialized`)
   }
 
-  streamsObject[url] = {
-    institutionName: institutionName,
-    childProcess: null,
-    status: 'Connecting',
-    retryCount: 0,
-    logs: [],
-    attemptLogs: {},
-    attemptId: 0,
-    activeAttemptId: null,
-    lastSuccessTs: null,
-  };
+  streamsObject[url] = createStreamEntry(institutionName || url, 'Connecting');
   console.log(`New object added to streamsObject dictionary: ${streamsObject}`)
 }
 
 // Function for removing a stream to streamsObject dictionary
 async function clearStreamsObject() {
   console.log(`streamsObject: ${streamsObject}`)
-  for (const url in streamsObject) {
-    if (streamsObject[url].childProcess != null) { // check if a child process is spawned (not necessarily running)
-      if (!streamsObject[url].childProcess.killed) {
-        await streamsObject[url].childProcess.kill('SIGTERM'); // kill spawned childprocess if it is spawned
-        console.log(`Object removed in streamsObject dictionary`)
+  const urls = Object.keys(streamsObject);
+  for (const url of urls) {
+    const childProcess = streamsObject[url]?.childProcess;
+    if (childProcess && !childProcess.killed) {
+      try {
+        childProcess.kill('SIGTERM');
+      } catch (error) {
+        console.log(`Error killing child process for ${url}: ${error}`);
       }
     }
+    delete streamsObject[url];
   }
-
-  streamsObject = {}; // Reinitialize streamsOject to empty dictionary
-  console.log(`streamsObject dictionary reinitialized: ${streamsObject}`)
+  console.log(`streamsObject dictionary cleared`)
 
   return 'success';
 }
@@ -248,7 +234,7 @@ async function removeStream(url) {
 
   if (entry.childProcess && !entry.childProcess.killed) {
     try {
-      await entry.childProcess.kill('SIGTERM');
+      entry.childProcess.kill('SIGTERM');
     } catch (error) {
       console.log(`Error killing child process for ${url}: ${error}`);
     }
@@ -265,17 +251,7 @@ async function spawnSlink2dali(receiver_ringserver) {
   try {
     await getStreamsObject();
     if (!streamsObject[receiver_ringserver]) {
-      streamsObject[receiver_ringserver] = {
-        institutionName: receiver_ringserver,
-        childProcess: null,
-        status: 'Connecting',
-        retryCount: 0,
-        logs: [],
-        attemptLogs: {},
-        attemptId: 0,
-        activeAttemptId: null,
-        lastSuccessTs: null,
-      };
+      streamsObject[receiver_ringserver] = createStreamEntry(receiver_ringserver, 'Connecting');
     }
 
     const streamEntry = streamsObject[receiver_ringserver];
@@ -358,7 +334,16 @@ async function spawnSlink2dali(receiver_ringserver) {
         console.log(`Command output: ${message.trim()}`); // Log output from slink2dali  
       }
 
-      const hasErrorKeyword = normalizedMessage.includes('error') || normalizedMessage.includes('unauth');
+      const hasAuthErrorKeyword =
+        normalizedMessage.includes('unauthorized') ||
+        normalizedMessage.includes('unauthenticated') ||
+        normalizedMessage.includes('unauth') ||
+        normalizedMessage.includes('forbidden') ||
+        normalizedMessage.includes('authentication') ||
+        normalizedMessage.includes('authorization') ||
+        normalizedMessage.includes('401') ||
+        normalizedMessage.includes('403');
+      const hasErrorKeyword = normalizedMessage.includes('error') || hasAuthErrorKeyword;
       const isRetryLog = normalizedMessage.includes('re-connecting') || normalizedMessage.includes('trying again') || normalizedMessage.includes('retry');
       const hasHealthySignal =
         normalizedMessage.includes('write_success') ||

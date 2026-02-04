@@ -1,7 +1,7 @@
 const streamUtils = require('./stream.utils');
 let { streamsObject } = require('./stream.utils');
 const deviceService = require('../services/device.service');
-const { responseCodes, responseMessages } = require('./responseCodes');
+const { responseCodes } = require('./responseCodes');
 
 
 // Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.

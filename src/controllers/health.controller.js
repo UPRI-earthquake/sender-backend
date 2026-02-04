@@ -28,6 +28,11 @@ const fsp = fs.promises;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const cpuSampleWindow = Number(process.env.RESOURCE_CPU_SAMPLE_MS || 1000);
+const cpuSampleCacheMs = Number(process.env.RESOURCE_CPU_CACHE_MS || cpuSampleWindow);
+
+let cachedCpuSample = null;
+let cachedCpuSampleAt = 0;
+let cachedCpuSamplePromise = null;
 
 async function sampleCpuUsage(sampleWindowMs = cpuSampleWindow) {
   const start = os.cpus();
@@ -69,6 +74,36 @@ async function sampleCpuUsage(sampleWindowMs = cpuSampleWindow) {
   };
 }
 
+async function getCpuUsageSnapshot(sampleWindowMs = cpuSampleWindow) {
+  const cacheable = sampleWindowMs === cpuSampleWindow;
+  const now = Date.now();
+  if (cacheable && cachedCpuSample && now - cachedCpuSampleAt <= cpuSampleCacheMs) {
+    return cachedCpuSample;
+  }
+  if (cacheable && cachedCpuSamplePromise) {
+    return cachedCpuSamplePromise;
+  }
+
+  const sampler = sampleCpuUsage(sampleWindowMs).then((result) => {
+    if (cacheable) {
+      cachedCpuSample = result;
+      cachedCpuSampleAt = Date.now();
+    }
+    return result;
+  });
+
+  if (!cacheable) {
+    return sampler;
+  }
+
+  cachedCpuSamplePromise = sampler;
+  try {
+    return await sampler;
+  } finally {
+    cachedCpuSamplePromise = null;
+  }
+}
+
 async function readDiskUsage(path = defaultDiskPath) {
   const { stdout } = await execAsync(`df -kP ${path}`);
   const lines = stdout.trim().split('\n');
@@ -95,17 +130,28 @@ async function readDiskUsage(path = defaultDiskPath) {
   };
 }
 
+let cachedTarget = null;
+let cachedTargetBaseUrl = null;
+
 function buildTarget() {
   const baseUrl = deviceService.buildW1BaseUrl();
+  if (cachedTarget && cachedTargetBaseUrl === baseUrl) {
+    return cachedTarget;
+  }
   const parsed = new URL(baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`);
-  const port = parsed.port || (parsed.protocol === 'https:' ? 443 : 80);
+  const parsedPort = parsed.port ? Number(parsed.port) : null;
+  const port = Number.isFinite(parsedPort) && parsedPort > 0
+    ? parsedPort
+    : (parsed.protocol === 'https:' ? 443 : 80);
 
-  return {
+  cachedTargetBaseUrl = baseUrl;
+  cachedTarget = {
     baseUrl: `${parsed.protocol}//${parsed.host}${parsed.pathname || ''}`,
     hostname: parsed.hostname,
     port,
     protocol: parsed.protocol,
   };
+  return cachedTarget;
 }
 
 function hasScheme(value = '') {
@@ -138,11 +184,18 @@ function parseHostPortFallback(value) {
     const portValue = Number(portMatch[1]);
     const hostname = trimmed.slice(0, trimmed.length - portMatch[0].length);
     if (hostname) {
+      if (hostname.includes(':') && net.isIP(hostname) !== 6) {
+        return null;
+      }
       return {
         hostname,
         port: Number.isFinite(portValue) && portValue > 0 ? portValue : null,
       };
     }
+  }
+
+  if (trimmed.includes(':') && net.isIP(trimmed) !== 6) {
+    return null;
   }
 
   return { hostname: trimmed, port: null };
@@ -453,7 +506,7 @@ async function resourcesHealth(req, res) {
   try {
     const [disk, cpu] = await Promise.all([
       readDiskUsage(defaultDiskPath),
-      sampleCpuUsage(),
+      getCpuUsageSnapshot(),
     ]);
 
     res.status(200).json({

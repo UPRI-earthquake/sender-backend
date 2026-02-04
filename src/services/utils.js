@@ -125,10 +125,12 @@ function read_coordinates() {
         continue;
       }
 
-      const xml = fs.readFileSync(xmlPath, 'utf8');
-      const lonMatch = xml.match(/<Longitude>\s*([-+]?\d+\.?\d*)\s*<\/Longitude>/i);
-      const latMatch = xml.match(/<Latitude>\s*([-+]?\d+\.?\d*)\s*<\/Latitude>/i);
-      const elevMatch = xml.match(/<Elevation>\s*([-+]?\d+\.?\d*)\s*<\/Elevation>/i);
+	      const xml = fs.readFileSync(xmlPath, 'utf8');
+	      // XML tags are case-sensitive, but station.xml casing varies across releases/devices.
+	      // Use a case-insensitive match to tolerate those differences.
+	      const lonMatch = xml.match(/<Longitude>\s*([-+]?\d+\.?\d*)\s*<\/Longitude>/i);
+	      const latMatch = xml.match(/<Latitude>\s*([-+]?\d+\.?\d*)\s*<\/Latitude>/i);
+	      const elevMatch = xml.match(/<Elevation>\s*([-+]?\d+\.?\d*)\s*<\/Elevation>/i);
 
       if (lonMatch) {
         assignIfMissing('longitude', parseFloat(lonMatch[1]));
@@ -197,16 +199,17 @@ function getHostDeviceConfig() {
 async function createLocalFileStoreDir() {
   try {
     // Try to prepare the configured directory; fall back to ./localDBs when running outside Docker.
-    const ensureDir = async (dir) => {
-      try {
-        await fs.promises.mkdir(dir, { recursive: true });
-        await fs.promises.access(dir, fs.constants.R_OK | fs.constants.W_OK);
-        return dir;
-      } catch (error) {
-        console.log(error);
-        return null;
-      }
-    };
+	    const ensureDir = async (dir) => {
+	      try {
+	        await fs.promises.mkdir(dir, { recursive: true });
+	        await fs.promises.access(dir, fs.constants.R_OK | fs.constants.W_OK);
+	        return dir;
+	      } catch (error) {
+	        const code = error?.code ? `${error.code} ` : '';
+	        console.log(`Unable to prepare local store directory "${dir}": ${code}${error?.message || error}`);
+	        return null;
+	      }
+	    };
 
     const configuredDir = process.env.LOCALDBS_DIRECTORY || './localDBs';
     let localFileStoreDir = await ensureDir(configuredDir);

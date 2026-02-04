@@ -38,20 +38,19 @@ async function getDeviceInfo(req, res) {
 // Function for linking the device to a registered account in ehub-backend
 async function linkDevice(req, res) {
   // Input validation schema
-  const accountValidationSchema = Joi.object({
-    username: Joi.string().required(),
-    password: Joi.string().min(1).max(256).required(),
-    longitude: Joi.string()
-      .regex(/^[-+]?(?:180(?:\.0{1,6})?|(?:1[0-7]\d|0?\d{1,2})(?:\.\d{1,6})?)$/)
-      .required(),
-    latitude: Joi.string()
-      .regex(/^[-+]?(?:90(?:\.0{1,6})?|(?:[0-8]?\d(?:\.\d{1,6})?))$/)
-      .required(),
-    elevation: Joi.string()
-      .regex(/^[-+]?\d+(\.\d+)?$/)
-      .required(),
-    forceRelink: Joi.boolean().optional(),
-  });
+	  const accountValidationSchema = Joi.object({
+	    username: Joi.string().required(),
+	    password: Joi.string().min(1).max(256).required(),
+	    longitude: Joi.string()
+	      .regex(/^[-+]?(?:180(?:\.0{1,6})?|(?:1[0-7]\d|0?\d{1,2})(?:\.\d{1,6})?)$/)
+	      .required(),
+	    latitude: Joi.string()
+	      .regex(/^[-+]?(?:90(?:\.0{1,6})?|(?:[0-8]?\d(?:\.\d{1,6})?))$/)
+	      .required(),
+	    elevation: Joi.string()
+	      .regex(/^[-+]?\d+(\.\d+)?$/)
+	      .required(),
+	  });
 
   try {
     // Validate input
@@ -104,18 +103,38 @@ async function linkDevice(req, res) {
       status: responseCodes.DEVICE_LINKING_SUCCESS,
       message: 'Successfully Requested Linking to W1',
     });
-  } catch (error) {
-    if (error.response) {
-      return res.status(error.response.status).json({
-        status: responseCodes.DEVICE_LINKING_EHUB_ERROR,
-        message: error.response?.status === 409
-          ? "Device already linked in Earthquake Hub. Use Reset Link or contact support to move it."
-          : "Error from earthquake-hub: " + error.response.data.message,
-      });
-    } else {
-      console.log(error)
-      return res.status(500).json({
-        status: responseCodes.DEVICE_LINKING_ERROR,
+	  } catch (error) {
+	    if (error.response) {
+	      const statusCode = error.response.status;
+	      const backendMessageRaw = error.response?.data?.message;
+	      const backendMessage = typeof backendMessageRaw === 'string'
+	        ? backendMessageRaw.trim()
+	        : backendMessageRaw
+	          ? String(backendMessageRaw)
+	          : '';
+	
+	      let message = backendMessage
+	        ? `Error from earthquake-hub: ${backendMessage}`
+	        : `Error from earthquake-hub (status ${statusCode})`;
+	
+	      if (statusCode === 409) {
+	        if (backendMessage && /already\s+linked/i.test(backendMessage)) {
+	          message = 'Device already linked in Earthquake Hub. Use Reset Link or contact support to move it.';
+	        } else if (backendMessage) {
+	          message = backendMessage; // Avoid assuming the nature of the conflict
+	        } else {
+	          message = 'Conflict response from earthquake-hub while linking device.';
+	        }
+	      }
+	
+	      return res.status(error.response.status).json({
+	        status: responseCodes.DEVICE_LINKING_EHUB_ERROR,
+	        message,
+	      });
+	    } else {
+	      console.log(error)
+	      return res.status(500).json({
+	        status: responseCodes.DEVICE_LINKING_ERROR,
         message: error?.message || 'Device linking failed',
       });
     }
