@@ -148,6 +148,39 @@ router.post('/add',
   serverController.linkingStatusCheck, // Middleware function
   serverController.addServer);
 
+/**
+ * @swagger
+ * /servers/remove:
+ *   post:
+ *     summary: Remove a ringserver from local storage and active stream processes
+ *     tags:
+ *       - Servers
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               url:
+ *                 type: string
+ *                 description: Ringserver URL to remove
+ *             required:
+ *               - url
+ *             example:
+ *               url: "https://earthquake.science.upd.edu.ph"
+ *     responses:
+ *       200:
+ *         description: Server removed successfully
+ *       400:
+ *         description: Missing server url
+ *       404:
+ *         description: Server URL not found
+ *       409:
+ *         description: Device credentials expired and relinking is required
+ *       500:
+ *         description: Server removal failed
+ */
 router.post('/remove', serverController.removeServer);
 
 module.exports = router;
