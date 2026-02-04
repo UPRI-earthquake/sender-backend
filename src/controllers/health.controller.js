@@ -6,13 +6,13 @@ const axios = require('axios');
 const Sntp = require('@hapi/sntp');
 const https = require('https');
 const os = require('os');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const { promisify } = require('util');
 const deviceService = require('../services/device.service');
 const { responseCodes } = require('./responseCodes');
 
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const defaultDiskPath = process.env.RESOURCE_DISK_PATH || '/';
 const ntpPort = Number(process.env.NTP_SERVER_PORT || 123);
 const ntpTimeoutMs = Number(process.env.NTP_REQUEST_TIMEOUT_MS || 2000);
@@ -104,8 +104,9 @@ async function getCpuUsageSnapshot(sampleWindowMs = cpuSampleWindow) {
   }
 }
 
-async function readDiskUsage(path = defaultDiskPath) {
-  const { stdout } = await execAsync(`df -kP ${path}`);
+async function readDiskUsage(diskPath = defaultDiskPath) {
+  // Avoid shell interpolation (diskPath can come from env and may contain spaces).
+  const { stdout } = await execFileAsync('df', ['-kP', '--', diskPath]);
   const lines = stdout.trim().split('\n');
   if (lines.length < 2) {
     throw new Error('Unexpected disk usage output');
@@ -122,7 +123,7 @@ async function readDiskUsage(path = defaultDiskPath) {
   const usedPercent = Number(percentToken.replace('%', '')) || Math.round((usedKb / Math.max(totalKb, 1)) * 100);
 
   return {
-    path,
+    path: diskPath,
     totalBytes: totalKb * 1024,
     usedBytes: usedKb * 1024,
     freeBytes: freeKb * 1024,
