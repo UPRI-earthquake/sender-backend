@@ -1,9 +1,32 @@
 const fs = require('fs').promises;
+const path = require('path');
 const Joi = require('joi');
 const serversService = require('../services/servers.service')
 const streamUtils = require('./stream.utils')
 const deviceService = require('../services/device.service');
 const { responseCodes, responseMessages } = require('./responseCodes')
+
+const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
+const serversFilePath = () => path.join(localDbDir(), 'servers.json');
+
+async function readLocalServersList() {
+  try {
+    const jsonString = await fs.readFile(serversFilePath(), 'utf-8');
+    const parsed = JSON.parse(jsonString);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function writeLocalServersList(serversList) {
+  const filePath = serversFilePath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(serversList));
+}
 
 // Function for getting the list of valid ringserver hosts registered in W1
 async function getRingserverHosts(req, res) {
@@ -47,10 +70,7 @@ async function addServer(req, res) {
   // No validation schema since this input is coming directly from W1, not a user input
 
   try {
-    // Read list of servers from servers.json file
-    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
-    const jsonString = await fs.readFile(filePath, 'utf-8');
-    const existingServers = JSON.parse(jsonString);
+    const existingServers = await readLocalServersList();
 
     const duplicate = existingServers.find((item) => item.url === req.body.url);
     if (duplicate) {
@@ -65,7 +85,7 @@ async function addServer(req, res) {
     };
 
     existingServers.push(newServer);
-    await fs.writeFile(filePath, JSON.stringify(existingServers)); // Add the input server to the array of servers in a json file (servers.json)
+    await writeLocalServersList(existingServers); // Add the input server to the array of servers in a json file (servers.json)
 
     await streamUtils.addNewStream(req.body.url, req.body.institutionName); // Adds the newly added server to streams object dictionary
     await streamUtils.spawnSlink2dali(req.body.url); // ASpawns slink2dali childprocess that starts streaming to the specified ringserver url
@@ -94,9 +114,7 @@ async function removeServer(req, res) {
 
   try {
     const { removedUrls } = await streamUtils.reconcileStreamsWithFile();
-    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
-    const jsonString = await fs.readFile(filePath, 'utf-8');
-    const existingServers = JSON.parse(jsonString);
+    const existingServers = await readLocalServersList();
 
     const index = existingServers.findIndex((item) => item.url === url);
     if (index === -1) {
@@ -142,7 +160,7 @@ async function removeServer(req, res) {
     }
 
     existingServers.splice(index, 1);
-    await fs.writeFile(filePath, JSON.stringify(existingServers));
+    await writeLocalServersList(existingServers);
     await streamUtils.removeStream(url);
 
     return res.status(200).json({
