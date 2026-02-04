@@ -291,7 +291,6 @@ async function resetLinkState(req, res) {
     if (!streamsCleared) {
       try {
         await streamUtils.clearStreamsObject();
-        streamsCleared = true;
       } catch (cleanupError) {
         console.log(cleanupError);
       }
@@ -300,7 +299,6 @@ async function resetLinkState(req, res) {
     if (!localCleared) {
       try {
         await deviceService.clearLocalLinkState();
-        localCleared = true;
       } catch (cleanupError) {
         console.log(cleanupError);
       }
