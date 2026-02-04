@@ -17,7 +17,11 @@ async function init() {
 
     for (const url in streamsObject) {
       if (streamsObject.hasOwnProperty(url)) {
-        await spawnSlink2dali(url);
+        try {
+          await spawnSlink2dali(url);
+        } catch (error) {
+          console.error(`Error starting stream for ${url}: ${error?.message || error}`);
+        }
       }
     }
   } catch (error) {

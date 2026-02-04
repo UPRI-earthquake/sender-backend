@@ -275,6 +275,10 @@ async function spawnSlink2dali(receiver_ringserver) {
     options.push('-a', token, '-S', net_sta, sender_slink2dali, receiver_ringserver);
 
     childProcess = spawn(command, options); // Execute the command using spawn
+    const waitForSpawn = new Promise((resolve, reject) => {
+      childProcess.once('spawn', resolve);
+      childProcess.once('error', reject);
+    });
 
     let hasError = false; // Flag to track if an error occurred
 
@@ -311,15 +315,19 @@ async function spawnSlink2dali(receiver_ringserver) {
           
           // Respawn slink2dali with interval depending on the number of retries
           if (updatedStream.retryCount <= 3) {
-            setTimeout(async () => {
+            setTimeout(() => {
               console.log('Respawning slink2dali...');
-              await spawnSlink2dali(receiver_ringserver);
+              spawnSlink2dali(receiver_ringserver).catch((respawnError) => {
+                console.log(`Respawn failed for ${receiver_ringserver}: ${respawnError?.message || respawnError}`);
+              });
             }, 1000*30); // Set 30-second-timeout (time is in milliseconds) if retryCount is less than or equal to 3 
           } 
           else { // retryCount > 3
-            setTimeout(async () => {
+            setTimeout(() => {
               console.log('Respawning slink2dali...');
-              await spawnSlink2dali(receiver_ringserver);
+              spawnSlink2dali(receiver_ringserver).catch((respawnError) => {
+                console.log(`Respawn failed for ${receiver_ringserver}: ${respawnError?.message || respawnError}`);
+              });
             }, 1000*60*2); // Set 2-minute-timeout (time is in milliseconds) if retryCount is more than to 3
           }
         }
@@ -375,10 +383,11 @@ async function spawnSlink2dali(receiver_ringserver) {
       hasError = true;
     });
 
+    await waitForSpawn;
     console.log('Child process spawned successfully');
   } catch (error) {
     console.error(`Error spawning slink2dali: ${error}`);
-    if (childProcess) {
+    if (childProcess && !childProcess.killed) {
       childProcess.kill();
     }
     if (streamsObject[receiver_ringserver]) {
@@ -386,8 +395,7 @@ async function spawnSlink2dali(receiver_ringserver) {
       streamsObject[receiver_ringserver].status = 'Error';
       appendStreamLog(receiver_ringserver, error.message || 'Unexpected spawning error');
     }
-    // Prevent crashes; mark error and return so caller can continue running
-    return null;
+    throw error;
   }
 }
 
