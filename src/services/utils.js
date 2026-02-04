@@ -88,7 +88,19 @@ function read_coordinates() {
 
   const configCandidates = [
     { path: `${settingsConfigPath}/config.json`, selector: (data) => data?.dataSharing || data },
-    { path: `${settingsConfigPath}/MD-info.json`, selector: (data) => data?.location || data?.dataSharing || data },
+    {
+      path: `${settingsConfigPath}/MD-info.json`,
+      selector: (data) => (
+        data?.GeoLocation
+        || data?.geoLocation
+        || data?.location
+        || data?.dataSharing
+        || data?.data?.GeoLocation
+        || data?.data?.geoLocation
+        || data?.data?.location
+        || data
+      ),
+    },
   ];
 
   for (const source of configCandidates) {
