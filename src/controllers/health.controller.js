@@ -11,7 +11,10 @@ const { promisify } = require('util');
 const deviceService = require('../services/device.service');
 const { responseCodes } = require('./responseCodes');
 
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+const allowInsecureTls = String(process.env.HEALTH_ALLOW_INSECURE_TLS || '').trim().toLowerCase() === 'true';
+const httpsAgent = allowInsecureTls
+  ? new https.Agent({ rejectUnauthorized: false })
+  : new https.Agent();
 const execFileAsync = promisify(execFile);
 const defaultDiskPath = process.env.RESOURCE_DISK_PATH || '/';
 const ntpPort = Number(process.env.NTP_SERVER_PORT || 123);

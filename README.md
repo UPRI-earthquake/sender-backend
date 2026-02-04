@@ -73,3 +73,10 @@ The `/health/time` endpoint now issues an SNTP query instead of relying on HTTP 
 | `NTP_REQUEST_TIMEOUT_MS` | `2000` | Milliseconds before the query aborts. |
 
 Set these in `.env` (or your container environment) if you need to point at a regional NTP source.
+
+### Network health TLS verification
+`/health/network` verifies HTTPS certificates by default. If you intentionally need to probe a self-signed endpoint, set:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `HEALTH_ALLOW_INSECURE_TLS` | `false` | When `true`, `/health/network` skips TLS certificate verification for its HTTPS probe. Use only for troubleshooting. |
