@@ -1,5 +1,3 @@
-version: '3.9'
-
 # Dev-only docker-compose for sender-backend + its
 # Earthquake Hub backend and MongoDB dependencies.
 #

@@ -17,29 +17,43 @@ If everything passes, proceed with the installer command above. Results are prin
 ## Development Setup
 To run this repository on your local machine, please follow the instructions provided under the [Setting Up The Repository On Your Local Machine](CONTRIBUTING.md#setting-up-the-repository-on-your-local-machine) section of the [contributing.md](CONTRIBUTING.md).
 
-### Local dev stack (backend + frontend + commons)
-The repo root has `docker-compose.dev.yml` that spins up the sender backend and frontend, wired to talk to a locally deployed EarthquakeHub “commons” stack (which provides the W1 backend and MongoDB).
+### Local dev stacks (Docker)
 
-1. Make sure the commons stack is running from `earthquake-hub-deployment/earthquake-hub-commons` (so that `ehub-backend` and `mongodb` are available on the `earthquake-hub-network`).
-2. Prepare env files:
+#### Option A: self-contained (sender-backend + local W1 + local MongoDB)
+Use `docker-compose.yml` in this repo.
+
+```bash
+cp .env.example .env
+docker compose --env-file .env up --build
+```
+
+#### Option B: commons-backed (sender-backend + optional sender-frontend)
+Use `docker-compose.dev.yml` in this repo. This stack assumes the EarthquakeHub “commons” stack is already running and has created the external Docker network `earthquake-hub-network`.
+
+1. Start the commons stack from `earthquake-hub-deployment/earthquake-hub-commons` (so that `ehub-backend` is available on `earthquake-hub-network`).
+2. Prepare the env file (defaults are for Option A, so update W1 targets for commons):
    ```bash
-   # sender-backend app env (used when running backend directly or via per-repo compose)
-   cp sender-backend/.env.example sender-backend/.env
-
-   # docker-compose.dev env (used by services in docker-compose.dev.yml)
    cp .env.example .env
-   # edit .env as needed; by default W1_DEV_IP=ehub-backend and W1_DEV_PORT=5000
+   # edit .env as needed; for commons use:
+   #   W1_DEV_IP=ehub-backend
+   #   W1_DEV_PORT=5000
    ```
-3. From the repo root, run:
+3. Start the backend (talking to commons):
    ```bash
    docker compose --env-file .env -f docker-compose.dev.yml up --build
    ```
-   Backend: `http://localhost:5001`, Frontend: `http://localhost:3000`, commons via nginx: `https://ehub.local`.
-4. To sanity-check the backend once containers are up:
+   Optional: if you also have the `sender-frontend` repo cloned next to this repo at `../sender-frontend`, start it too:
    ```bash
-   curl http://localhost:5001/health/time
-   curl http://localhost:5001/device/info
+   docker compose --env-file .env -f docker-compose.dev.yml --profile frontend up --build
    ```
+
+Backend: `http://localhost:5001` (and frontend, if enabled: `http://localhost:3000`).
+
+To sanity-check the backend once containers are up:
+```bash
+curl http://localhost:5001/health/time
+curl http://localhost:5001/device/info
+```
 
 ### RShake settings fixtures for dev
 - `dev/settings` mirrors the `/opt/settings` layout of an RShake (including `sys` files plus `config/config.json` and `config/MD-info.json` from the screenshots). The compose file mounts this tree to `/opt/settings`, matching the default `RSHAKE_SETTINGS_PATH`.
