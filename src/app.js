@@ -7,7 +7,7 @@ const fs = require('fs')
 
 const app = express()
 
-if(process.env.NODE_ENV !== 'production'){
+if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
   const options = {
     swaggerDefinition: {
       openapi: '3.0.0',
