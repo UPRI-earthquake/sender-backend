@@ -122,7 +122,7 @@ async function linkDevice(req, res) {
 
       if (statusCode === 409) {
         if (backendMessage && /already\s+linked/i.test(backendMessage)) {
-          message = 'Device is already linked to another account. Ask the current owner to release it from rs.local:3000 or contact support.';
+          message = 'Device is already linked to another account. Ask the current owner to unlink it from rs.local:3000 or contact support.';
           errorCode = errorCode || 'DEVICE_LINKED_TO_OTHER_ACCOUNT';
         } else if (backendMessage) {
           message = backendMessage; // Avoid assuming the nature of the conflict
