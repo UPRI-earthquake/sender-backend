@@ -106,7 +106,8 @@ async function linkDevice(req, res) {
 	  } catch (error) {
 	    if (error.response) {
 	      const statusCode = error.response.status;
-	      const backendMessageRaw = error.response?.data?.message;
+      const backendMessageRaw = error.response?.data?.message;
+      const backendErrorCode = error.response?.data?.errorCode;
 	      const backendMessage = typeof backendMessageRaw === 'string'
 	        ? backendMessageRaw.trim()
 	        : backendMessageRaw
@@ -117,20 +118,24 @@ async function linkDevice(req, res) {
 	        ? `Error from earthquake-hub: ${backendMessage}`
 	        : `Error from earthquake-hub (status ${statusCode})`;
 	
-	      if (statusCode === 409) {
-	        if (backendMessage && /already\s+linked/i.test(backendMessage)) {
-	          message = 'Device already linked in Earthquake Hub. Use Reset Link or contact support to move it.';
-	        } else if (backendMessage) {
-	          message = backendMessage; // Avoid assuming the nature of the conflict
-	        } else {
-	          message = 'Conflict response from earthquake-hub while linking device.';
-	        }
-	      }
-	
-	      return res.status(error.response.status).json({
-	        status: responseCodes.DEVICE_LINKING_EHUB_ERROR,
-	        message,
-	      });
+      let errorCode = backendErrorCode || null;
+
+      if (statusCode === 409) {
+        if (backendMessage && /already\s+linked/i.test(backendMessage)) {
+          message = 'Device is already linked to another account. Ask the current owner to release it from rs.local:3000 or contact support.';
+          errorCode = errorCode || 'DEVICE_LINKED_TO_OTHER_ACCOUNT';
+        } else if (backendMessage) {
+          message = backendMessage; // Avoid assuming the nature of the conflict
+        } else {
+          message = 'Conflict response from earthquake-hub while linking device.';
+        }
+      }
+
+      return res.status(error.response.status).json({
+        status: responseCodes.DEVICE_LINKING_EHUB_ERROR,
+        message,
+        errorCode,
+      });
 	    } else {
 	      console.log(error)
 	      return res.status(500).json({
