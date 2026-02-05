@@ -1,51 +1,76 @@
 const request = require('supertest');
-const app = require('../src/app');
 
-describe("POST /deviceLinkRequest", () => {
-    describe("when accountName is empty", () => {
-        //should respond with a status code 400
-        test("should respond with a 400 status code", async () => {
-            const response = await request(app).post("/deviceLinkRequest").send({
-                accountName: "",
-                accountPassword: "test"
-            })
-            expect(response.statusCode).toBe(400)
-        })
-    })
+jest.mock('../src/services/device.service', () => {
+  const actual = jest.requireActual('../src/services/device.service');
+  return {
+    ...actual,
+    requestLinking: jest.fn().mockResolvedValue({
+      accessToken: 'test-access-token',
+      refreshToken: 'test-refresh-token',
+      deviceInfo: { network: 'AM', station: 'TEST' },
+    }),
+    persistTokenPair: jest.fn().mockResolvedValue(undefined),
+  };
+});
 
-    describe("when accountPassword is empty", () => {
-        //should respond with a status code 400
-        test("should respond with a 400 status code", async () => {
-            const response = await request(app).post("/deviceLinkRequest").send({
-                accountName: "test",
-                accountPassword: ""
-            })
-            expect(response.statusCode).toBe(400)
-        })
-    })
+describe('POST /device/link', () => {
+  let app;
+  let consoleLogSpy;
 
-    describe("given an accountName and accountPassword", () => {
-        //should respond with a json object
-        
-        //This test would only pass given the following condition:
-        //1. W1_DEV_HOST (http://172.22.0.3:5000) is reachable
-        //2. accountName and accountPassword fields are not empty
-        //3. Device's Mac Address is acquired.
-        test("should respond with a 200 status code", async () => {
-            const response = await request(app).post("/deviceLinkRequest").send({
-                accountName: "test",
-                accountPassword: "test"
-            })
-            // console.log(response.text)
-            expect(response.statusCode).toBe(200)
-        })
+  beforeAll(() => {
+    jest.resetModules();
+    process.env.NODE_ENV = 'test';
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    app = require('../src/app');
+  });
 
-        test("should specify json in the content type header", async () => {
-            const response = await request(app).post("/deviceLinkRequest").send({
-                accountName: "test",
-                accountPassword: "test"
-            })
-            expect(response.headers['content-type']).toEqual(expect.stringContaining('json'))
-        })
-    })
-})
+  afterAll(() => {
+    if (consoleLogSpy) {
+      consoleLogSpy.mockRestore();
+    }
+  });
+
+  it('rejects missing username (401)', async () => {
+    const response = await request(app).post('/device/link').send({
+      username: '',
+      password: 'test',
+      latitude: '14.5995',
+      longitude: '121.0424',
+      elevation: '42.75',
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('rejects missing password (401)', async () => {
+    const response = await request(app).post('/device/link').send({
+      username: 'test',
+      password: '',
+      latitude: '14.5995',
+      longitude: '121.0424',
+      elevation: '42.75',
+    });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('returns 200 for valid link request (mocked)', async () => {
+    const response = await request(app).post('/device/link').send({
+      username: 'test',
+      password: 'test',
+      latitude: '14.5995',
+      longitude: '121.0424',
+      elevation: '42.75',
+    });
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('responds with JSON', async () => {
+    const response = await request(app).post('/device/link').send({
+      username: 'test',
+      password: 'test',
+      latitude: '14.5995',
+      longitude: '121.0424',
+      elevation: '42.75',
+    });
+    expect(response.headers['content-type']).toEqual(expect.stringContaining('json'));
+  });
+});

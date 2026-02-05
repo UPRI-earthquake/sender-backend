@@ -1,0 +1,48 @@
+{
+  "hwVersion": "V4",
+  "geophoneType": "Factory",
+  "network": {
+    "static": false,
+    "ipaddress": "",
+    "gateway": "",
+    "dns1": "",
+    "dns2": "",
+    "dns3": "",
+    "ssid": "",
+    "password": "",
+    "wifi": true
+  },
+  "other": {
+    "heliscaling": 0.5,
+    "archkeep": 7,
+    "slport": 18000
+  },
+  "dataSharing": {
+    "enabled": false,
+    "firstName": "Dev",
+    "lastName": "Operator",
+    "mailAddress": "dev-operator@example.com",
+    "lat": 14.5995,
+    "lon": 121.0424,
+    "elevation": 42.75,
+    "floor": 2,
+    "totalFloors": 5,
+    "licenseAgreed": true,
+    "purpose": "Testing"
+  },
+  "archivingEnabled": true,
+  "ntpServers": [],
+  "odfSerialPort": "",
+  "helicorderEnabled": true,
+  "streams": [
+    { "host": "10.0.0.10", "name": "UDPSTREAM1", "port": "8888" },
+    { "host": "10.0.0.11", "name": "UDPSTREAM2", "port": "8888" },
+    { "host": "10.0.0.12", "name": "UDPSTREAM3", "port": "8886" },
+    { "host": "169.254.92.116", "name": "UDPSTREAM4", "port": "8888" }
+  ],
+  "boomFilter": 1,
+  "enableStatic": false,
+  "enableStaticWifi": false,
+  "dnsServer": "192.168.0.1",
+  "dnsServerWifi": "192.168.0.1"
+}

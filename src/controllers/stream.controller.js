@@ -1,11 +1,12 @@
-const streamUtils = require('./stream.utils')
-let { streamsObject } = require('./stream.utils')
-const { responseCodes, responseMessages } = require('./responseCodes')
+const streamUtils = require('./stream.utils');
+const deviceService = require('../services/device.service');
+const { responseCodes } = require('./responseCodes');
 
 
 // Middleware function that checks if the device is already linked to an account; Status should not be 'Streaming'. Should not proceed if 'Not yet linked'.
 async function streamStatusCheck(req, res, next) {
-  await streamUtils.getStreamsObject();
+  await streamUtils.reconcileStreamsWithFile();
+  const streamsObject = await streamUtils.getStreamsObject();
 
   const url = req.body.url;
   if (!streamsObject.hasOwnProperty(url)) {
@@ -28,29 +29,40 @@ async function startStreaming(req, res) {
   console.log('POST Request sent on /stream/start endpoint')
 
   try {
-    await spawnSlink2dali(req.body.url);
+    await deviceService.ensureValidAccessToken();
+    await streamUtils.spawnSlink2dali(req.body.url);
     res.status(200).json({ 
       status: responseCodes.START_STREAMING_SUCCESS,
       message: 'Child Process Spawned Successfully' });
   } catch (error) {
     console.log(`Error spawning slink2dali: ${error}`)
-    res.status(500).json({ 
-      status: responseCodes.START_STREAMING_ERROR,
-      message: 'Error spawning child process' });
+    const relinkRequired = error?.code === 'RELINK_REQUIRED';
+    res.status(relinkRequired ? 409 : 500).json({ 
+      status: relinkRequired
+        ? responseCodes.DEVICE_RELINK_REQUIRED
+        : responseCodes.START_STREAMING_ERROR,
+      message: relinkRequired
+        ? (error.message || 'Device link expired. Relink the device to resume streaming.')
+        : 'Error spawning child process' });
   }
 }
 
 // Function for getting the status of each stream to ringservers 
 async function getStreamingStatus(req, res) {
   console.log('GET Request sent on /stream/status endpoint')
-  streamsObject = await streamUtils.getStreamsObject();
+  await streamUtils.reconcileStreamsWithFile();
+  const streamsObject = await streamUtils.getStreamsObject();
 
   const outputObject = {};
 
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
-      const { status, institutionName, retryCount } = streamsObject[url];
-      outputObject[url] = { status, institutionName, retryCount };
+      const streamEntry = streamsObject[url];
+      if (streamEntry.retryCount === 0 && streamEntry.childProcess && !streamEntry.childProcess.killed && streamEntry.status !== 'Streaming') {
+        await streamUtils.updateStreamStatus(url, streamEntry.childProcess, false, true);
+      }
+      const { status, institutionName, retryCount, logs } = streamsObject[url];
+      outputObject[url] = { status, institutionName, retryCount, logs: logs || [] };
     }
   }
 
