@@ -1,0 +1,73 @@
+# Dev-only docker-compose for running sender-backend against a locally deployed
+# EarthquakeHub “commons” stack (W1 backend + MongoDB).
+#
+# This compose file is intentionally separate from `docker-compose.yml`:
+# - `docker-compose.yml` is self-contained (it spins up sender-backend + W1 + MongoDB).
+# - `docker-compose.dev.yml` assumes the commons stack is already running and that the
+#   external Docker network `earthquake-hub-network` exists.
+#
+# Usage (from sender-backend repo root):
+#   1) Start the commons stack (earthquake-hub-deployment/earthquake-hub-commons).
+#   2) cp .env.example .env
+#      # set W1_DEV_IP=ehub-backend and W1_DEV_PORT=5000 (defaults are for docker-compose.yml)
+#   3) docker compose --env-file .env -f docker-compose.dev.yml up --build
+#
+# Optional frontend:
+# - If you also have the sender-frontend repo cloned next to this repo (../sender-frontend),
+#   you can start it via the `frontend` profile:
+#     docker compose --env-file .env -f docker-compose.dev.yml --profile frontend up --build
+
+services:
+  sender-backend-dev:
+    container_name: sender-backend-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: "build-env" # dev stage: nodemon + bind mount
+    platform: linux/arm/v7
+    image: "sender-backend:dev"
+    volumes:
+      - ./:/app/dev
+      - ./dev/settings:/opt/settings
+      - sender-backend-localDBs:/app/localDBs
+    expose:
+      - "5001"
+    working_dir: /app/dev
+    command: npm run start:dev
+    environment:
+      # Passed via `docker compose --env-file .env ...`.
+      W1_DEV_IP: ${W1_DEV_IP}
+      W1_DEV_PORT: ${W1_DEV_PORT}
+      NODE_ENV: ${NODE_ENV:-development}
+    ports:
+      - "5001:5001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - earthquake-hub-network
+
+  sender-frontend-dev:
+    profiles: ["frontend"]
+    platform: linux/arm/v7
+    container_name: sender-frontend-dev
+    build:
+      context: ../sender-frontend
+      dockerfile: Dockerfile
+      target: "base"
+    image: "sender-frontend:dev"
+    volumes:
+      - ../sender-frontend:/app
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_BACKEND_PORT: ${REACT_APP_BACKEND_PORT:-5001}
+    command: npm start
+
+volumes:
+  sender-backend-localDBs:
+    name: sender-backend-localDBs
+
+networks:
+  earthquake-hub-network:
+    external: true
+    name: earthquake-hub-network

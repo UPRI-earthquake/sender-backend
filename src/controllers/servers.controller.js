@@ -1,8 +1,32 @@
 const fs = require('fs').promises;
+const path = require('path');
 const Joi = require('joi');
 const serversService = require('../services/servers.service')
 const streamUtils = require('./stream.utils')
+const deviceService = require('../services/device.service');
 const { responseCodes, responseMessages } = require('./responseCodes')
+
+const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
+const serversFilePath = () => path.join(localDbDir(), 'servers.json');
+
+async function readLocalServersList() {
+  try {
+    const jsonString = await fs.readFile(serversFilePath(), 'utf-8');
+    const parsed = JSON.parse(jsonString);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function writeLocalServersList(serversList) {
+  const filePath = serversFilePath();
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(serversList));
+}
 
 // Function for getting the list of valid ringserver hosts registered in W1
 async function getRingserverHosts(req, res) {
@@ -24,15 +48,18 @@ async function getRingserverHosts(req, res) {
 
 // Middleware function that checks if the device is already linked to an account
 async function linkingStatusCheck(req, res, next) {
-  // Read data from token.json file
-  const filePath = `${process.env.LOCALDBS_DIRECTORY}/token.json`
-  const jsonString = await fs.readFile(filePath, 'utf-8');
-  const token = JSON.parse(jsonString);
-
-  if (!token.accessToken) {
+  try {
+    await deviceService.ensureValidAccessToken();
+  } catch (error) {
+    const relinkRequired = error?.code === 'RELINK_REQUIRED';
     return res.status(409).json({ 
-      status: responseCodes.ADD_SERVER_DEVICE_NOT_YET_LINKED, 
-      message: 'Link your device first before adding a ringserver url' })
+      status: relinkRequired
+        ? responseCodes.DEVICE_RELINK_REQUIRED
+        : responseCodes.ADD_SERVER_DEVICE_NOT_YET_LINKED,
+      message: relinkRequired
+        ? (error.message || 'Device credentials expired. Relink the device before adding a ringserver URL.')
+        : 'Link your device first before adding a ringserver url',
+    });
   }
 
   next(); // Proceed to the next middleware/route handler
@@ -43,10 +70,7 @@ async function addServer(req, res) {
   // No validation schema since this input is coming directly from W1, not a user input
 
   try {
-    // Read list of servers from servers.json file
-    const filePath = `${process.env.LOCALDBS_DIRECTORY}/servers.json`;
-    const jsonString = await fs.readFile(filePath, 'utf-8');
-    const existingServers = JSON.parse(jsonString);
+    const existingServers = await readLocalServersList();
 
     const duplicate = existingServers.find((item) => item.url === req.body.url);
     if (duplicate) {
@@ -61,7 +85,7 @@ async function addServer(req, res) {
     };
 
     existingServers.push(newServer);
-    await fs.writeFile(filePath, JSON.stringify(existingServers)); // Add the input server to the array of servers in a json file (servers.json)
+    await writeLocalServersList(existingServers); // Add the input server to the array of servers in a json file (servers.json)
 
     await streamUtils.addNewStream(req.body.url, req.body.institutionName); // Adds the newly added server to streams object dictionary
     await streamUtils.spawnSlink2dali(req.body.url); // ASpawns slink2dali childprocess that starts streaming to the specified ringserver url
@@ -78,4 +102,78 @@ async function addServer(req, res) {
   }
 }
 
-module.exports = { getRingserverHosts, addServer, linkingStatusCheck };
+// Function for removing a server from local store and streamsObject
+async function removeServer(req, res) {
+  const url = req.body?.url;
+  if (!url) {
+    return res.status(400).json({
+      status: responseCodes.REMOVE_SERVER_ERROR,
+      message: 'Missing server url',
+    });
+  }
+
+  try {
+    const { removedUrls } = await streamUtils.reconcileStreamsWithFile();
+    const existingServers = await readLocalServersList();
+
+    const index = existingServers.findIndex((item) => item.url === url);
+    if (index === -1) {
+      if (removedUrls.includes(url)) {
+        return res.status(200).json({
+          status: responseCodes.REMOVE_SERVER_SUCCESS,
+          message: 'Server removed successfully',
+        });
+      }
+      return res.status(404).json({
+        status: responseCodes.REMOVE_SERVER_NOT_FOUND,
+        message: 'Server URL not found',
+      });
+    }
+
+    // Attempt remote cleanup on the associated brgy account
+    const targetServer = existingServers[index] || {};
+    const brgyUsername = targetServer.institutionName;
+    const { streamId } = await deviceService.getStoredDeviceInfo();
+    if (brgyUsername && streamId) {
+      try {
+        const token = await deviceService.ensureValidAccessToken();
+        await serversService.removeDeviceFromBrgyAccount(token, brgyUsername, streamId);
+      } catch (error) {
+        console.log(`Error removing device from brgy account ${brgyUsername}: ${error}`);
+        if (error?.code === 'RELINK_REQUIRED') {
+          return res.status(409).json({
+            status: responseCodes.DEVICE_RELINK_REQUIRED,
+            message: error.message || responseMessages.DEVICE_RELINK_REQUIRED,
+          });
+        }
+        if (error?.response) {
+          return res.status(error.response.status).json({
+            status: responseCodes.REMOVE_SERVER_ERROR,
+            message: error.response?.data?.message || 'Error removing device from brgy account',
+          });
+        }
+        return res.status(500).json({
+          status: responseCodes.REMOVE_SERVER_ERROR,
+          message: 'Error removing device from brgy account',
+        });
+      }
+    }
+
+    existingServers.splice(index, 1);
+    await writeLocalServersList(existingServers);
+    await streamUtils.removeStream(url);
+
+    return res.status(200).json({
+      status: responseCodes.REMOVE_SERVER_SUCCESS,
+      message: 'Server removed successfully',
+    });
+  } catch (error) {
+    console.log(`Error removing server: ${error}`);
+    return res.status(500).json({
+      status: responseCodes.REMOVE_SERVER_ERROR,
+      message: 'Error occurred in removing server',
+    });
+  }
+}
+
+module.exports = { getRingserverHosts, addServer, removeServer, linkingStatusCheck };

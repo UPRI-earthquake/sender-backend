@@ -17,6 +17,9 @@ const responseCodes = {
   GET_DEVICE_INFO_SUCCESS: 40,
   GET_DEVICE_INFO_ERROR: 140,
 
+  DEVICE_HOST_CONFIG_REFRESH_SUCCESS: 41,
+  DEVICE_HOST_CONFIG_REFRESH_ERROR: 141,
+
   GET_SERVERS_LIST_SUCCESS: 50,
   GET_SERVERS_LIST_ERROR: 150,
 
@@ -24,6 +27,9 @@ const responseCodes = {
   ADD_SERVER_ERROR: 160,
   ADD_SERVER_DEVICE_NOT_YET_LINKED: 161,
   ADD_SERVER_DUPLICATE: 162,
+  REMOVE_SERVER_SUCCESS: 63,
+  REMOVE_SERVER_ERROR: 163,
+  REMOVE_SERVER_NOT_FOUND: 164,
 
   DEVICE_LINKING_SUCCESS: 70,
   DEVICE_LINKING_ERROR: 170,
@@ -42,12 +48,25 @@ const responseCodes = {
   GET_STREAMS_STATUS_SUCCESS: 90,
   GET_STREAMS_STATUS_ERROR: 190,
 
+  HEALTH_NETWORK_SUCCESS: 95,
+  HEALTH_NETWORK_ERROR: 195,
+  HEALTH_TIME_SUCCESS: 96,
+  HEALTH_TIME_ERROR: 196,
+  HEALTH_RESOURCES_SUCCESS: 98,
+  HEALTH_RESOURCES_ERROR: 198,
+  DEVICE_TOKEN_REFRESH_SUCCESS: 97,
+  DEVICE_TOKEN_REFRESH_ERROR: 197,
+  DEVICE_RELINK_REQUIRED: 199,
+
   STOP_STREAMING_SUCCESS: 30,
   STOP_STREAMING_ERROR: 130,
 
   DEVICE_UNLINKING_SUCCESS: 20,
   DEVICE_UNLINKING_ERROR: 120,
   DEVICE_UNLINKING_EHUB_ERROR: 121,
+  DEVICE_RESET_SUCCESS: 21,
+  DEVICE_RESET_ERROR: 122,
+  DEVICE_RESET_EHUB_ERROR: 123,
 };
 
 const responseMessages = {
@@ -56,6 +75,8 @@ const responseMessages = {
 
   GET_DEVICE_INFO_SUCCESS: "Reading device information success",
   GET_DEVICE_INFO_ERROR: "Reading device information error",
+  DEVICE_HOST_CONFIG_REFRESH_SUCCESS: "Device metadata refresh success",
+  DEVICE_HOST_CONFIG_REFRESH_ERROR: "Device metadata refresh error",
 
   GET_SERVERS_LIST_SUCCESS: "Reading servers list information success",
   GET_SERVERS_LIST_ERROR: "Reading servers list information error",
@@ -65,6 +86,9 @@ const responseMessages = {
   ADD_SERVER_DEVICE_NOT_YET_LINKED: "Device is not yet linked. Link first.",
   ADD_SERVER_INVALID_HOSTNAME: "Invalid input hostname",
   ADD_SERVER_DUPLICATE: "Server URL already saved",
+  REMOVE_SERVER_SUCCESS: "Remove server success",
+  REMOVE_SERVER_ERROR: "Remove server error",
+  REMOVE_SERVER_NOT_FOUND: "Server URL not found",
 
   DEVICE_LINKING_SUCCESS: "Device linking success",
   DEVICE_LINKING_ERROR: "Device linking error",
@@ -77,6 +101,19 @@ const responseMessages = {
 
   GET_STREAMS_STATUS_SUCCESS: "Get streams status success",
   GET_STREAMS_STATUS_ERROR: "Get streams status error",
+
+  HEALTH_NETWORK_SUCCESS: "Network health check success",
+  HEALTH_NETWORK_ERROR: "Network health check error",
+  HEALTH_TIME_SUCCESS: "Time health check success",
+  HEALTH_TIME_ERROR: "Time health check error",
+  HEALTH_RESOURCES_SUCCESS: "Resource utilization snapshot success",
+  HEALTH_RESOURCES_ERROR: "Resource utilization snapshot error",
+  DEVICE_TOKEN_REFRESH_SUCCESS: "Access token refresh success",
+  DEVICE_TOKEN_REFRESH_ERROR: "Access token refresh error",
+  DEVICE_RELINK_REQUIRED: "Device credentials invalid. Relink required",
+  DEVICE_RESET_SUCCESS: "Device reset success",
+  DEVICE_RESET_ERROR: "Device reset error",
+  DEVICE_RESET_EHUB_ERROR: "Device reset error from earthquakehub",
 };
 
 module.exports = {
