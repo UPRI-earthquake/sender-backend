@@ -2,8 +2,8 @@
 INSTALL_DIR="/usr/local/bin"
 
 # Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub
-BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/sender-backend.sh"
-FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/main/sender-frontend.sh"
+BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/sender-improvements/sender-backend.sh"
+FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/sender-improvements/sender-frontend.sh"
 
 echo "Removing software ..."
 

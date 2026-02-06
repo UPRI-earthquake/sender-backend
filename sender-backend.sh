@@ -219,6 +219,10 @@ function create_container() {
 	            --log-driver json-file \
 	            --log-opt max-size=10m \
 	            --log-opt max-file=3 \
+                --dns 1.1.1.1 \
+                --dns 1.0.0.1 \
+                --dns 8.8.8.8 \
+                --dns 8.8.4.4 \
 	            "${dns_flag[@]}" \
 	            --net UPRI-docker-network \
 	            "$IMAGE"

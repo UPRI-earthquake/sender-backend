@@ -6,6 +6,7 @@
 PING_HOSTS="${PING_HOSTS:-1.1.1.1 8.8.8.8}"
 HTTP_URLS="${HTTP_URLS:-https://github.com https://google.com}"
 DNS_HOSTNAMES="${DNS_HOSTNAMES:-github.com pool.ntp.org}"
+DNS_RESOLV_PATH="${DNS_RESOLV_PATH:-/etc/resolv.conf}"
 NTP_SERVER="${NTP_SERVER:-pool.ntp.org}"
 TIME_HTTP_CHECK_URL="${TIME_HTTP_CHECK_URL:-https://google.com}"
 DISK_PATH="${DISK_PATH:-/}"
@@ -68,6 +69,14 @@ word_in_list() {
   return 1
 }
 
+get_resolvers() {
+  if [ -f "$DNS_RESOLV_PATH" ]; then
+    awk '/^nameserver[[:space:]]+/ {print $2}' "$DNS_RESOLV_PATH" | tr '\n' ' ' | awk '{$1=$1;print}'
+  else
+    echo ""
+  fi
+}
+
 resolve_host() {
   target="$1"
   i=0
@@ -111,6 +120,12 @@ check_interfaces() {
 check_dns() {
   missing_tools=0
   failures=0
+  resolvers="$(get_resolvers)"
+  if [ -n "$resolvers" ]; then
+    dns_example="$resolvers"
+  else
+    dns_example="<resolver-ip>"
+  fi
 
   for host in $DNS_HOSTNAMES; do
     resolved=$(resolve_host "$host")
@@ -130,12 +145,21 @@ check_dns() {
     status_pass "DNS resolution ok for: $DNS_HOSTNAMES"
   else
     status_fail "DNS resolution failed for $failures hostname(s).
-  Actions: inspect /etc/resolv.conf, test 'getent hosts <hostname>', restart DHCP with 'sudo dhclient -v <iface>', or set a known-good resolver."
+  Actions: inspect /etc/resolv.conf, test 'getent hosts <hostname>', restart DHCP with 'sudo dhclient -v <iface>', or set a known-good resolver.
+  Note: If DNS works on the host but containers fail, override sender-backend DNS.
+  Example: sudo SENDER_BACKEND_DNS=\"$dns_example\" sender-backend UPDATE"
   fi
 }
 
 check_outbound() {
   ping_ok=0
+  resolvers="$(get_resolvers)"
+  if [ -n "$resolvers" ]; then
+    dns_example="$resolvers"
+  else
+    dns_example="<resolver-ip>"
+  fi
+
   for host in $PING_HOSTS; do
     attempt=1
     while [ "$attempt" -le "$PING_ATTEMPTS" ]; do
@@ -188,7 +212,9 @@ check_outbound() {
     status_pass "HTTP/HTTPS reachability looks good (sample endpoint reachable)"
   else
     status_fail "HTTP/HTTPS reachability failed for: $HTTP_URLS (proxy/captive portal/firewall?).
-  Actions: try 'curl -v --max-time $HTTP_TIMEOUT <url>', check for captive portal, and ensure outbound 80/443 is allowed."
+  Actions: try 'curl -v --max-time $HTTP_TIMEOUT <url>', check for captive portal, and ensure outbound 80/443 is allowed.
+  Note: If HTTPS works on the host but fails in containers, override sender-backend DNS using host resolvers.
+  Example: sudo SENDER_BACKEND_DNS=\"$dns_example\" sender-backend UPDATE"
   fi
 }
 
