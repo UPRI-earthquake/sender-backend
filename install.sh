@@ -3,19 +3,9 @@
 # Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub
 BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/sender-improvements/sender-backend.sh"
 FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/sender-improvements/sender-frontend.sh"
-PREINSTALL_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/sender-improvements/preinstall-health-check.sh"
 
 # Install sender-backend and sender-frontend into /usr/local/bin directory
 INSTALL_DIR="/usr/local/bin"
-
-run_preinstall_health_check() {
-    echo "Running pre-install health check..."
-    if ! bash <(curl -fsSL "$PREINSTALL_URL"); then
-        echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "Pre-install health check failed. Fix the issues above and re-run the installer."
-        exit 1
-    fi
-}
 
 # Function to download and install a script
 download_and_install_script() {
@@ -49,8 +39,6 @@ prompt_reboot() {
             ;;
     esac
 }
-
-run_preinstall_health_check
 
 # Download and install the backend script
 download_and_install_script "$BACKEND_URL" "sender-backend"
