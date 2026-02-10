@@ -22,6 +22,14 @@ DNS_MODE_LABEL_KEY="upri.sender-backend.dns-mode"
 DNS_CHECK_HOSTS_DEFAULT="earthquake.science.upd.edu.ph github.com"
 DNS_FLAGS=()
 
+function get_docker_create_network_flag() {
+    if docker create --help 2>/dev/null | grep -q -- '--network'; then
+        printf "%s" "--network"
+    else
+        printf "%s" "--net"
+    fi
+}
+
 function trim_whitespace() {
     local value="$1"
     value="${value#"${value%%[![:space:]]*}"}"
@@ -509,6 +517,7 @@ function create_network() {
 
 function create_container() {
     local dns_mode="${1:-auto}"
+    local docker_network_flag
 
     if docker inspect "$CONTAINER" >/dev/null 2>&1; then
         echo -en "[  \e[32mOK\e[0m  ] "
@@ -522,6 +531,7 @@ function create_container() {
         local in_docker_hostname="docker-host"
 
         prepare_dns_flags "$dns_mode" || return 1
+        docker_network_flag="$(get_docker_create_network_flag)"
 
         # create container
         # TODO: Change W1_PROD_IP to earthquake-hub domain /api (for production)
@@ -538,7 +548,7 @@ function create_container() {
             --log-opt max-file=3 \
             --label "$DNS_MODE_LABEL_KEY=$dns_mode" \
             "${DNS_FLAGS[@]}" \
-            --network "$DOCKER_NETWORK" \
+            "$docker_network_flag" "$DOCKER_NETWORK" \
             "$IMAGE"
             # 1st volume: workaround for docker's oci runtime error
             # 2nd volume: contains NET and STAT info
