@@ -31,8 +31,8 @@ sender-frontend REMOVE_IMAGE
 
 sender-backend REMOVE_NETWORK
 
-sender-backend UNINSTALL_SERVICE
-sender-frontend UNINSTALL_SERVICE
+sudo sender-backend UNINSTALL_SERVICE
+sudo sender-frontend UNINSTALL_SERVICE
 
 # Remove sender-backend and sender-frontend scripts from /usr/local/bin
 sudo rm -f /usr/local/bin/sender-backend
