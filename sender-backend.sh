@@ -450,21 +450,40 @@ EOF
 
 function uninstall_update_timer() {
     local removed=0
+    local failed=0
 
-    systemctl stop "$UPDATE_TIMER" >/dev/null 2>&1
-    systemctl disable "$UPDATE_TIMER" >/dev/null 2>&1
+    sudo systemctl stop "$UPDATE_TIMER" >/dev/null 2>&1
+    sudo systemctl disable "$UPDATE_TIMER" >/dev/null 2>&1
 
     if [[ -f "$UPDATE_TIMER_FILE" ]]; then
-        rm "$UPDATE_TIMER_FILE"
-        removed=1
+        if sudo rm -f "$UPDATE_TIMER_FILE"; then
+            removed=1
+        else
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "Failed to remove $UPDATE_TIMER_FILE."
+            failed=1
+        fi
     fi
 
     if [[ -f "$UPDATE_SERVICE_FILE" ]]; then
-        rm "$UPDATE_SERVICE_FILE"
-        removed=1
+        if sudo rm -f "$UPDATE_SERVICE_FILE"; then
+            removed=1
+        else
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "Failed to remove $UPDATE_SERVICE_FILE."
+            failed=1
+        fi
     fi
 
-    systemctl daemon-reload
+    if ! sudo systemctl daemon-reload >/dev/null 2>&1; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to reload systemd daemon."
+        failed=1
+    fi
+
+    if [[ $failed -eq 1 ]]; then
+        return 1
+    fi
 
     echo -en "[  \e[32mOK\e[0m  ] "
     if [[ $removed -eq 1 ]]; then
