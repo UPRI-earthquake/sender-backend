@@ -2,9 +2,12 @@ const fs = require('fs')
 const { spawn } = require('child_process');
 const { read_network, read_station } = require('../services/utils');
 const deviceService = require('../services/device.service');
+const rshakeAlertsService = require('../services/rshakeAlerts.service');
 
 const MAX_LOG_ENTRIES = 20;
 const localStoreDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
+const ALERT_STATUS_ERROR = 'Error';
+const ALERT_STATUS_STREAMING = 'Streaming';
 
 let streamsObject = {};
 const verboseSlinkLogs = process.env.SLINK2DALI_VERBOSE_LOGS === 'true';
@@ -21,6 +24,7 @@ function createStreamEntry(institutionName, status = 'Not Streaming') {
     attemptId: 0,
     activeAttemptId: null,
     lastSuccessTs: null,
+    alertActive: status === ALERT_STATUS_ERROR,
   };
 }
 
@@ -61,6 +65,85 @@ function appendStreamLog(url, message) {
     entry.attemptLogs[activeAttemptId] = targetLogs.slice(-MAX_LOG_ENTRIES);
     entry.logs = entry.attemptLogs[activeAttemptId];
   }
+}
+
+function deriveStatusFromRetryCount(retryCount) {
+  if (retryCount === 0) {
+    return ALERT_STATUS_STREAMING;
+  }
+  if (retryCount <= 3) {
+    return 'Connecting';
+  }
+  return ALERT_STATUS_ERROR;
+}
+
+function sanitizeDedupeToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function notifyStatusTransition(url, previousStatus, streamEntry) {
+  const currentStatus = streamEntry?.status;
+  if (!streamEntry || !currentStatus || previousStatus === currentStatus) {
+    return;
+  }
+
+  const targetLabel = streamEntry.institutionName || url;
+  const dedupeBase = sanitizeDedupeToken(url || streamEntry.institutionName || 'stream');
+
+  if (currentStatus === ALERT_STATUS_ERROR) {
+    if (streamEntry.alertActive) {
+      return;
+    }
+
+    streamEntry.alertActive = true;
+    await rshakeAlertsService.postRshakeAlert({
+      type: 'device.alert',
+      alertCode: 'STREAM_ERROR',
+      severity: 'critical',
+      status: ALERT_STATUS_ERROR,
+      summary: `RShake stream to ${targetLabel} entered Error state.`,
+      details: {
+        receiverRingserver: url,
+        institutionName: streamEntry.institutionName || null,
+        previousStatus: previousStatus || null,
+        currentStatus,
+        retryCount: streamEntry.retryCount,
+        attemptId: streamEntry.activeAttemptId ?? streamEntry.attemptId ?? null,
+      },
+      dedupeKey: `${dedupeBase}.stream-error`,
+    });
+    return;
+  }
+
+  if (currentStatus === ALERT_STATUS_STREAMING && streamEntry.alertActive) {
+    streamEntry.alertActive = false;
+    await rshakeAlertsService.postRshakeAlert({
+      type: 'device.recovery',
+      alertCode: 'STREAM_RECOVERY',
+      severity: 'info',
+      status: ALERT_STATUS_STREAMING,
+      summary: `RShake stream to ${targetLabel} recovered and is Streaming.`,
+      details: {
+        receiverRingserver: url,
+        institutionName: streamEntry.institutionName || null,
+        previousStatus: previousStatus || null,
+        currentStatus,
+        retryCount: streamEntry.retryCount,
+        lastSuccessTs: streamEntry.lastSuccessTs || null,
+      },
+      dedupeKey: `${dedupeBase}.stream-recovery`,
+    });
+  }
+}
+
+function triggerStatusTransitionNotification(url, previousStatus, streamEntry) {
+  notifyStatusTransition(url, previousStatus, streamEntry).catch((error) => {
+    console.log(`Unable to notify alert transition for ${url}: ${error?.message || error}`);
+  });
 }
 
 // Function for initializing streamsObject dictionary
@@ -125,6 +208,9 @@ async function reconcileStreamsWithFile() {
     if (!Object.prototype.hasOwnProperty.call(streamsObject[url], 'lastSuccessTs')) {
       streamsObject[url].lastSuccessTs = null;
     }
+    if (!Object.prototype.hasOwnProperty.call(streamsObject[url], 'alertActive')) {
+      streamsObject[url].alertActive = streamsObject[url].status === ALERT_STATUS_ERROR;
+    }
   });
 
   return { streamsObject, removedUrls };
@@ -136,8 +222,9 @@ Function for updating the status of the specified url in streamsObject dictionar
   childProcess: child process object
   retryFlag: increment retry count by 1, if true
   resetFlag: reset retryCount to 0,if true
+  statusOverride: optional fixed status value to bypass retry-based status selection
 */
-async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
+async function updateStreamStatus(url, childProcess, retryFlag, resetFlag, statusOverride = null) {
   await getStreamsObject();
   const streamEntry = streamsObject[url];
 
@@ -145,6 +232,7 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
     return;
   }
 
+  const previousStatus = streamEntry.status;
   streamEntry.childProcess = childProcess;
 
   if (retryFlag) {
@@ -158,17 +246,16 @@ async function updateStreamStatus(url, childProcess, retryFlag, resetFlag) {
     streamEntry.activeAttemptId = null;
     streamEntry.lastSuccessTs = Date.now();
   }
-  
-  // Set status based on number of spawn retries
-  if (streamEntry.retryCount === 0) {
-    streamEntry.status = 'Streaming';
-    if (!resetFlag && !streamEntry.lastSuccessTs) {
-      streamEntry.lastSuccessTs = Date.now();
-    }
-  } else if (streamEntry.retryCount <= 3) {
-    streamEntry.status = 'Connecting';
-  } else {
-    streamEntry.status = 'Error';
+
+  const nextStatus = statusOverride || deriveStatusFromRetryCount(streamEntry.retryCount);
+  streamEntry.status = nextStatus;
+
+  if (nextStatus === ALERT_STATUS_STREAMING && !resetFlag && !streamEntry.lastSuccessTs) {
+    streamEntry.lastSuccessTs = Date.now();
+  }
+
+  if (previousStatus !== nextStatus) {
+    triggerStatusTransitionNotification(url, previousStatus, streamEntry);
   }
 
   return streamEntry;
@@ -181,7 +268,7 @@ async function markStreamHealthy(url, childProcess) {
     return null;
   }
 
-  const alreadyStreaming = streamEntry.status === 'Streaming' && streamEntry.retryCount === 0;
+  const alreadyStreaming = streamEntry.status === ALERT_STATUS_STREAMING && streamEntry.retryCount === 0;
   if (alreadyStreaming) {
     streamEntry.lastSuccessTs = streamEntry.lastSuccessTs || Date.now();
     return streamEntry;
@@ -391,8 +478,7 @@ async function spawnSlink2dali(receiver_ringserver) {
       childProcess.kill();
     }
     if (streamsObject[receiver_ringserver]) {
-      await updateStreamStatus(receiver_ringserver, null, true, false);
-      streamsObject[receiver_ringserver].status = 'Error';
+      await updateStreamStatus(receiver_ringserver, null, true, false, ALERT_STATUS_ERROR);
       appendStreamLog(receiver_ringserver, error.message || 'Unexpected spawning error');
     }
     throw error;
