@@ -21,6 +21,380 @@ UPDATE_TIMER_FILE="/lib/systemd/system/$UPDATE_TIMER"
 DNS_MODE_LABEL_KEY="upri.sender-backend.dns-mode"
 DNS_CHECK_HOSTS_DEFAULT="earthquake.science.upd.edu.ph github.com"
 DNS_FLAGS=()
+AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert"
+AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
+LAST_PULL_RESULT="unknown"
+AUTO_UPDATE_STATE_FILE="/tmp/upri-sender-auto-update-state.env"
+SENDER_SCRIPT_AUTO_UPDATE_ENABLED_DEFAULT="true"
+SENDER_SCRIPT_UPDATE_TIMEOUT_SEC_DEFAULT=20
+BACKEND_SCRIPT_PATH="/usr/local/bin/sender-backend"
+FRONTEND_SCRIPT_PATH="/usr/local/bin/sender-frontend"
+SENDER_BACKEND_SCRIPT_URL_DEFAULT="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/sender-improvements/sender-backend.sh"
+SENDER_FRONTEND_SCRIPT_URL_DEFAULT="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/sender-improvements/sender-frontend.sh"
+SCRIPT_BACKEND_UPDATE_STATE="not-run"
+SCRIPT_FRONTEND_UPDATE_STATE="not-run"
+
+function json_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/}"
+    printf "%s" "$value"
+}
+
+function sanitize_token() {
+    local value="$1"
+    value="$(echo "$value" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g; s/^-*//; s/-*$//')"
+    if [[ -z "$value" ]]; then
+        printf "unknown"
+    else
+        printf "%s" "$value"
+    fi
+}
+
+function read_device_value() {
+    local file_path="$1"
+    if [[ -r "$file_path" ]]; then
+        tr -d '\r' < "$file_path" | head -n 1 | xargs
+        return 0
+    fi
+    printf ""
+    return 1
+}
+
+function classify_pull_state_from_output() {
+    local output="$1"
+    if echo "$output" | grep -qi "Downloaded newer image"; then
+        printf "updated"
+        return 0
+    fi
+    if echo "$output" | grep -qi "Image is up to date\|up to date for"; then
+        printf "no-change"
+        return 0
+    fi
+    if echo "$output" | grep -qi "pulled successfully"; then
+        printf "pulled"
+        return 0
+    fi
+    printf "unknown"
+}
+
+function parse_bool() {
+    local raw="$1"
+    local normalized
+
+    normalized="$(echo "${raw:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+    case "$normalized" in
+        1|true|yes|on)
+            return 0
+            ;;
+        0|false|no|off)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+function install_script_payload() {
+    local src_file="$1"
+    local dest_file="$2"
+
+    if install -m 0755 "$src_file" "$dest_file" >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && sudo -n install -m 0755 "$src_file" "$dest_file" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+function update_script_from_url() {
+    local script_path="$1"
+    local script_url="$2"
+    local script_name="$3"
+    local timeout_sec="$4"
+    local tmp_file
+
+    tmp_file="$(mktemp "/tmp/${script_name}.XXXXXX")" || {
+        echo -en "[\e[1;33mWARN\e[0m] " >&2
+        echo "Unable to allocate temp file for $script_name script update." >&2
+        printf "tempfile-failed"
+        return 1
+    }
+
+    if ! curl --fail --silent --show-error --location --max-time "$timeout_sec" "$script_url" -o "$tmp_file"; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[\e[1;33mWARN\e[0m] " >&2
+        echo "Failed to download latest $script_name script." >&2
+        printf "download-failed"
+        return 1
+    fi
+
+    if ! head -n 1 "$tmp_file" | grep -q '^#!'; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[\e[1;33mWARN\e[0m] " >&2
+        echo "Downloaded $script_name script failed basic validation." >&2
+        printf "invalid-content"
+        return 1
+    fi
+
+    chmod 0755 "$tmp_file" >/dev/null 2>&1 || true
+
+    if [[ -r "$script_path" ]] && cmp -s "$tmp_file" "$script_path"; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[  \e[32mOK\e[0m  ] " >&2
+        echo "$script_name script already up-to-date." >&2
+        printf "no-change"
+        return 0
+    fi
+
+    if install_script_payload "$tmp_file" "$script_path"; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[  \e[32mOK\e[0m  ] " >&2
+        echo "$script_name script updated successfully." >&2
+        printf "updated"
+        return 0
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    echo -en "[\e[1;33mWARN\e[0m] " >&2
+    echo "Insufficient permission to update $script_name script at $script_path." >&2
+    printf "permission-denied"
+    return 1
+}
+
+function refresh_sender_scripts() {
+    local enabled_raw timeout_sec backend_url frontend_url
+
+    SCRIPT_BACKEND_UPDATE_STATE="not-run"
+    SCRIPT_FRONTEND_UPDATE_STATE="not-run"
+
+    enabled_raw="${SENDER_SCRIPT_AUTO_UPDATE_ENABLED:-$SENDER_SCRIPT_AUTO_UPDATE_ENABLED_DEFAULT}"
+    if ! parse_bool "$enabled_raw"; then
+        SCRIPT_BACKEND_UPDATE_STATE="disabled"
+        SCRIPT_FRONTEND_UPDATE_STATE="disabled"
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Sender script auto-update disabled by configuration."
+        return 0
+    fi
+
+    timeout_sec="${SENDER_SCRIPT_UPDATE_TIMEOUT_SEC:-$SENDER_SCRIPT_UPDATE_TIMEOUT_SEC_DEFAULT}"
+    if ! [[ "$timeout_sec" =~ ^[0-9]+$ ]]; then
+        timeout_sec="$SENDER_SCRIPT_UPDATE_TIMEOUT_SEC_DEFAULT"
+    fi
+
+    backend_url="${SENDER_BACKEND_SCRIPT_URL:-$SENDER_BACKEND_SCRIPT_URL_DEFAULT}"
+    frontend_url="${SENDER_FRONTEND_SCRIPT_URL:-$SENDER_FRONTEND_SCRIPT_URL_DEFAULT}"
+
+    SCRIPT_BACKEND_UPDATE_STATE="$(update_script_from_url "$BACKEND_SCRIPT_PATH" "$backend_url" "sender-backend" "$timeout_sec")"
+    SCRIPT_FRONTEND_UPDATE_STATE="$(update_script_from_url "$FRONTEND_SCRIPT_PATH" "$frontend_url" "sender-frontend" "$timeout_sec")"
+}
+
+function write_backend_update_state() {
+    local backend_exit="$1"
+    local backend_pull_state="$2"
+    local backend_script_update="$3"
+    local frontend_script_update="$4"
+    local now_ts
+
+    now_ts="$(date +%s)"
+    cat <<EOF > "$AUTO_UPDATE_STATE_FILE"
+BACKEND_EXIT=$backend_exit
+BACKEND_PULL_STATE=$backend_pull_state
+BACKEND_SCRIPT_UPDATE_STATE=$backend_script_update
+FRONTEND_SCRIPT_UPDATE_STATE=$frontend_script_update
+BACKEND_IMAGE=$IMAGE
+BACKEND_CONTAINER=$CONTAINER
+STATE_TS=$now_ts
+EOF
+}
+
+function post_auto_update_alert() {
+    local alert_code="$1"
+    local severity="$2"
+    local summary="$3"
+    local backend_exit="$4"
+    local frontend_exit="$5"
+    local backend_pull_state="$6"
+    local frontend_pull_state="$7"
+    local backend_script_update="$8"
+    local frontend_script_update="$9"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "curl is unavailable; skipping auto-update alert post."
+        return 0
+    fi
+
+    local network station mac stream_id message_id occurred_at endpoint timeout_sec dedupe_key schema_version
+    local device_json first_field
+    network="$(read_device_value /opt/settings/sys/NET.txt)"
+    station="$(read_device_value /opt/settings/sys/STN.txt)"
+    mac="$(read_device_value /opt/settings/sys/eth-mac.txt)"
+    stream_id="${network}_${station}_.*/MSEED"
+
+    if [[ -z "${network}${station}${mac}" ]]; then
+        local host_fallback
+        host_fallback="$(hostname 2>/dev/null || true)"
+        if [[ -z "$host_fallback" ]]; then
+            host_fallback="sender-backend"
+        fi
+        stream_id="AUTO_UPDATE_${host_fallback}"
+    fi
+
+    occurred_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        message_id="$(cat /proc/sys/kernel/random/uuid)"
+    else
+        message_id="$(date +%s%N)-$RANDOM"
+    fi
+
+    endpoint="${AUTO_UPDATE_ALERT_ENDPOINT:-$AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT}"
+    timeout_sec="${AUTO_UPDATE_ALERT_TIMEOUT_SEC:-$AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT}"
+    schema_version="${RSHAKE_ALERT_SCHEMA_VERSION:-1.0}"
+    dedupe_key="auto-update.$(sanitize_token "${station:-$stream_id}").$(sanitize_token "$alert_code")"
+
+    device_json="{"
+    first_field=1
+    if [[ -n "$network" ]]; then
+        device_json="${device_json}\"network\":\"$(json_escape "$network")\""
+        first_field=0
+    fi
+    if [[ -n "$station" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"station\":\"$(json_escape "$station")\""
+        first_field=0
+    fi
+    if [[ -n "$stream_id" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"streamId\":\"$(json_escape "$stream_id")\""
+        first_field=0
+    fi
+    if [[ -n "$mac" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"macAddress\":\"$(json_escape "$mac")\""
+        first_field=0
+    fi
+    if [[ $first_field -eq 1 ]]; then
+        device_json="${device_json}\"streamId\":\"AUTO_UPDATE_SENDER\""
+    fi
+    device_json="${device_json}}"
+
+    local payload
+    payload=$(cat <<EOF
+{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"device.alert","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"AUTO_UPDATE","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-auto-update","notificationScope":"admin-only","backendExitCode":$backend_exit,"frontendExitCode":$frontend_exit,"backendPullState":"$(json_escape "$backend_pull_state")","frontendPullState":"$(json_escape "$frontend_pull_state")","backendScriptUpdate":"$(json_escape "$backend_script_update")","frontendScriptUpdate":"$(json_escape "$frontend_script_update")"},"dedupeKey":"$(json_escape "$dedupe_key")"}
+EOF
+)
+
+    if curl --silent --show-error --max-time "$timeout_sec" \
+        -H "Content-Type: application/json" \
+        -X POST "$endpoint" \
+        -d "$payload" >/dev/null; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Auto-update alert posted to central endpoint."
+        return 0
+    fi
+
+    echo -en "[\e[1;33mWARN\e[0m] "
+    echo "Failed to post auto-update alert to central endpoint."
+    return 0
+}
+
+function update_stack_with_alert() {
+    local backend_output backend_exit frontend_output frontend_exit backend_pull_state frontend_pull_state
+    local alert_code severity summary
+
+    rm -f "$AUTO_UPDATE_STATE_FILE" >/dev/null 2>&1
+    refresh_sender_scripts
+
+    LAST_PULL_RESULT="unknown"
+    backend_output="$(update_container 2>&1)"
+    backend_exit=$?
+    if [[ -n "$backend_output" ]]; then
+        echo "$backend_output"
+    fi
+    backend_pull_state="$LAST_PULL_RESULT"
+    if [[ "$backend_pull_state" == "unknown" ]]; then
+        backend_pull_state="$(classify_pull_state_from_output "$backend_output")"
+    fi
+
+    if [[ -x /usr/local/bin/sender-frontend ]]; then
+        frontend_output="$(/usr/local/bin/sender-frontend UPDATE 2>&1)"
+        frontend_exit=$?
+        if [[ -n "$frontend_output" ]]; then
+            echo "$frontend_output"
+        fi
+        frontend_pull_state="$(classify_pull_state_from_output "$frontend_output")"
+    else
+        frontend_exit=127
+        frontend_pull_state="missing-script"
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "sender-frontend script is missing or not executable."
+    fi
+
+    if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
+        alert_code="AUTO_UPDATE_FAILED"
+        severity="critical"
+        summary="Sender auto-update executed with failures."
+    elif [[ "$backend_pull_state" == "no-change" && "$frontend_pull_state" == "no-change" ]]; then
+        alert_code="AUTO_UPDATE_NO_CHANGE"
+        severity="info"
+        summary="Sender auto-update executed; no newer images were available."
+    else
+        alert_code="AUTO_UPDATE_EXECUTED"
+        severity="info"
+        summary="Sender auto-update executed successfully."
+    fi
+
+    post_auto_update_alert \
+        "$alert_code" \
+        "$severity" \
+        "$summary" \
+        "$backend_exit" \
+        "$frontend_exit" \
+        "$backend_pull_state" \
+        "$frontend_pull_state" \
+        "$SCRIPT_BACKEND_UPDATE_STATE" \
+        "$SCRIPT_FRONTEND_UPDATE_STATE"
+
+    if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+function update_container_with_state() {
+    local backend_output backend_exit backend_pull_state
+
+    refresh_sender_scripts
+    LAST_PULL_RESULT="unknown"
+    backend_output="$(update_container 2>&1)"
+    backend_exit=$?
+    if [[ -n "$backend_output" ]]; then
+        echo "$backend_output"
+    fi
+
+    backend_pull_state="$LAST_PULL_RESULT"
+    if [[ "$backend_pull_state" == "unknown" ]]; then
+        backend_pull_state="$(classify_pull_state_from_output "$backend_output")"
+    fi
+
+    write_backend_update_state \
+        "$backend_exit" \
+        "$backend_pull_state" \
+        "$SCRIPT_BACKEND_UPDATE_STATE" \
+        "$SCRIPT_FRONTEND_UPDATE_STATE"
+    return "$backend_exit"
+}
 
 function get_docker_create_network_flag() {
     if docker create --help 2>/dev/null | grep -q -- '--network'; then
@@ -383,14 +757,7 @@ EOF
 }
 
 function install_update_timer() {
-    local service_written=0
-    local timer_written=0
-
-    if [[ -f "$UPDATE_SERVICE_FILE" ]]; then
-        echo -en "[  \e[32mOK\e[0m  ] "
-        echo "Unit file $UPDATE_SERVICE_FILE already exists."
-    else
-        cat <<EOF > "$UPDATE_SERVICE_FILE"
+    cat <<EOF > "$UPDATE_SERVICE_FILE"
 [Unit]
 Description=UPRI: Sender Stack Auto-update Service
 ConditionPathExists=/usr/local/bin/sender-backend
@@ -401,20 +768,18 @@ After=docker.service network-online.target
 [Service]
 Type=oneshot
 User=myshake
-ExecStart=/usr/bin/env bash -c '/usr/local/bin/sender-backend UPDATE; backend=\$?; /usr/local/bin/sender-frontend UPDATE; frontend=\$?; exit \$(( backend || frontend ))'
+ExecStart=/usr/local/bin/sender-backend UPDATE_STACK
 
 [Install]
 WantedBy=multi-user.target
 EOF
-        echo "Unit file $UPDATE_SERVICE_FILE written."
-        service_written=1
+    if [[ $? -ne 0 ]]; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to write $UPDATE_SERVICE_FILE."
+        return 1
     fi
 
-    if [[ -f "$UPDATE_TIMER_FILE" ]]; then
-        echo -en "[  \e[32mOK\e[0m  ] "
-        echo "Unit file $UPDATE_TIMER_FILE already exists."
-    else
-        cat <<EOF > "$UPDATE_TIMER_FILE"
+    cat <<EOF > "$UPDATE_TIMER_FILE"
 [Unit]
 Description=UPRI: Sender Stack Auto-update Timer
 
@@ -428,18 +793,19 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-        echo "Unit file $UPDATE_TIMER_FILE written."
-        timer_written=1
+    if [[ $? -ne 0 ]]; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to write $UPDATE_TIMER_FILE."
+        return 1
     fi
+
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "Auto-update unit files written/updated."
 
     systemctl daemon-reload
     if systemctl enable --now "$UPDATE_TIMER" >/dev/null 2>&1; then
         echo -en "[  \e[32mOK\e[0m  ] "
-        if [[ $timer_written -eq 1 ]]; then
-            echo "$UPDATE_TIMER installed, enabled, and started."
-        else
-            echo "$UPDATE_TIMER already enabled; ensured it is running."
-        fi
+        echo "$UPDATE_TIMER enabled and started."
         return 0
     else
         echo -en "[\e[1;31mFAILED\e[0m] "
@@ -495,8 +861,17 @@ function uninstall_update_timer() {
 }
 
 function pull_container() {
-    docker pull "$IMAGE"
-    if [[ $? -eq 0 ]]; then
+    local pull_output
+    local pull_exit
+
+    pull_output="$(docker pull "$IMAGE" 2>&1)"
+    pull_exit=$?
+    LAST_PULL_RESULT="$(classify_pull_state_from_output "$pull_output")"
+    if [[ -n "$pull_output" ]]; then
+        echo "$pull_output"
+    fi
+
+    if [[ $pull_exit -eq 0 ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Image $IMAGE pulled successfully."
         return 0
@@ -808,7 +1183,10 @@ case $1 in
         start_container
         ;;
     "UPDATE")
-        update_container
+        update_container_with_state
+        ;;
+    "UPDATE_STACK")
+        update_stack_with_alert
         ;;
     "STOP")
         stop_container
@@ -835,6 +1213,6 @@ case $1 in
         uninstall_update_timer
         ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|NETWORK_SETUP|PULL|CREATE|START|STOP|UPDATE|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|NETWORK_SETUP|PULL|CREATE|START|STOP|UPDATE|UPDATE_STACK|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER]"
         ;;
 esac
