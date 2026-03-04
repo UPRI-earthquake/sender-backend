@@ -1,19 +1,20 @@
 #!/bin/bash
+set -u
+
 INSTALL_DIR="/usr/local/bin"
+HOST_SCRIPTS_DIR="${SENDER_HOST_SCRIPTS_DIR:-/opt/upri/host-scripts}"
 
-# Check if sender-scripts exist in INSTALL_DIR
-if [[ ! -f "$INSTALL_DIR/sender-backend" ]]; then
+if [[ ! -f "${INSTALL_DIR}/sender-backend" ]]; then
     echo -en "[\e[1;31mFAILED\e[0m] "
-    echo "sender-backend script does not exist in $INSTALL_DIR"
+    echo "sender-backend launcher does not exist in $INSTALL_DIR"
     exit 1
 fi
-if [[ ! -f "$INSTALL_DIR/sender-frontend" ]]; then
+if [[ ! -f "${INSTALL_DIR}/sender-frontend" ]]; then
     echo -en "[\e[1;31mFAILED\e[0m] "
-    echo "sender-frontend script does not exist in $INSTALL_DIR"
+    echo "sender-frontend launcher does not exist in $INSTALL_DIR"
     exit 1
 fi
 
-# Remove sender-backend and sender-frontend containers, images, network, & service
 sender-backend STOP
 sender-backend REMOVE_CONTAINER
 sender-backend REMOVE_IMAGE
@@ -28,17 +29,18 @@ sender-backend REMOVE_NETWORK
 sudo sender-backend UNINSTALL_SERVICE
 sudo sender-frontend UNINSTALL_SERVICE
 
-# Remove sender-backend and sender-frontend scripts from /usr/local/bin
-sudo rm -f /usr/local/bin/sender-backend
-sudo rm -f /usr/local/bin/sender-frontend
+sudo rm -f "${INSTALL_DIR}/sender-backend"
+sudo rm -f "${INSTALL_DIR}/sender-frontend"
 
-# Check if sender-backend and sender-frontend scripts are removed
-if [[ -f "$INSTALL_DIR/sender-backend" || -f "$INSTALL_DIR/sender-frontend" ]]; then
+sudo rm -f "${HOST_SCRIPTS_DIR}/sender-backend" "${HOST_SCRIPTS_DIR}/sender-frontend" "${HOST_SCRIPTS_DIR}/.bundle-version"
+sudo rmdir "${HOST_SCRIPTS_DIR}" >/dev/null 2>&1 || true
+
+if [[ -f "${INSTALL_DIR}/sender-backend" || -f "${INSTALL_DIR}/sender-frontend" ]]; then
     echo -en "[\e[1;31mFAILED\e[0m] "
-    echo "Failed to remove one or both sender scripts from $INSTALL_DIR"
+    echo "Failed to remove one or both sender launchers from $INSTALL_DIR"
     exit 1
-else
-    echo -en "[  \e[32mOK\e[0m  ] "
-    echo "Both sender-backend and sender-frontend scripts successfully removed from $INSTALL_DIR"
-    exit 0
 fi
+
+echo -en "[  \e[32mOK\e[0m  ] "
+echo "Sender launchers and host-script payloads removed successfully"
+exit 0

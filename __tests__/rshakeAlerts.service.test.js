@@ -28,6 +28,7 @@ describe('rshakeAlerts.service', () => {
     delete process.env.W1_RS_ALERT_PATH;
     delete process.env.RSHAKE_ALERT_POST_TIMEOUT_MS;
     delete process.env.RSHAKE_ALERT_SCHEMA_VERSION;
+    delete process.env.RSHAKE_ALERT_SHARED_SECRET;
 
     deviceService.buildW1BaseUrl.mockReturnValue('http://central.example:5000');
     deviceService.getStoredDeviceInfo.mockResolvedValue({
@@ -88,6 +89,28 @@ describe('rshakeAlerts.service', () => {
     });
     expect(payload.messageId).toEqual(expect.any(String));
     expect(payload.occurredAt).toEqual(expect.any(String));
+  });
+
+  it('adds shared-secret header when configured', async () => {
+    process.env.RSHAKE_ALERT_SHARED_SECRET = 'sender-secret';
+    axios.post.mockResolvedValue({ status: 202 });
+
+    const result = await postRshakeAlert({
+      type: 'device.alert',
+      alertCode: 'STREAM_ERROR',
+      severity: 'critical',
+      status: 'Error',
+      summary: 'Header test',
+    });
+
+    expect(result).toEqual({ str: 'success', status: 202 });
+    const [, , options] = axios.post.mock.calls[0];
+    expect(options).toEqual({
+      timeout: 5000,
+      headers: {
+        'X-RShake-Alert-Secret': 'sender-secret',
+      },
+    });
   });
 
   it('does not post when alerts are disabled', async () => {

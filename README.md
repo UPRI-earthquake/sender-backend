@@ -14,6 +14,19 @@ bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-back
 ```
 If everything passes, proceed with the installer command above. Results are printed directly to the terminal.
 
+### Auto-Update v2 Layout
+Current sender rollout keeps stable launchers in `/usr/local/bin` and stores mutable script payloads in `/opt/upri/host-scripts`:
+- `/usr/local/bin/sender-backend` -> wrapper that delegates to `/opt/upri/host-scripts/sender-backend`
+- `/usr/local/bin/sender-frontend` -> wrapper that delegates to `/opt/upri/host-scripts/sender-frontend`
+
+The backend container mounts `/opt/upri/host-scripts` and runs a startup sync hook to self-heal payload scripts from the image bundle when needed.
+
+For existing deployments using older launchers, run one-time bootstrap:
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/update.sh")
+```
+After bootstrap, normal operator commands stay the same (`sender-backend START`, etc.).
+
 ## Development Setup
 To run this repository on your local machine, please follow the instructions provided under the [Setting Up The Repository On Your Local Machine](CONTRIBUTING.md#setting-up-the-repository-on-your-local-machine) section of the [contributing.md](CONTRIBUTING.md).
 
@@ -54,6 +67,14 @@ To sanity-check the backend once containers are up:
 curl http://localhost:5001/health/time
 curl http://localhost:5001/device/info
 ```
+
+### Update Bundle Controls
+Host update scripts resolve tags to digests before deployment:
+- `SENDER_BUNDLE_TAG` (default `latest`; can be pinned to semver like `1.2.2`)
+- `SENDER_BACKEND_IMAGE_REPO` (default `ghcr.io/upri-earthquake/sender-backend`)
+- `SENDER_FRONTEND_IMAGE_REPO` (default `ghcr.io/upri-earthquake/sender-frontend`)
+
+State snapshots are written to `/var/lib/upri-sender/update-state.json` (fallback to `/tmp/upri-sender/update-state.json` if permissions prevent writing to `/var/lib`).
 
 ### RShake settings fixtures for dev
 - `dev/settings` mirrors the `/opt/settings` layout of an RShake (including `sys` files plus `config/config.json` and `config/MD-info.json` from the screenshots). The compose file mounts this tree to `/opt/settings`, matching the default `RSHAKE_SETTINGS_PATH`.

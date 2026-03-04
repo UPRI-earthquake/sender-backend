@@ -28,13 +28,25 @@ Sender-backend repository uses Docker to provide a consistent and portable devel
     > Note: replace X.Y.Z, and you should be at the same directory as the Dockerfile
 
     ```bash
-    docker build -t ghcr.io/upri-earthquake/sender-backend:X.Y.Z .
+    docker buildx build --platform linux/arm/v7 \
+      --build-arg BUNDLE_VERSION=X.Y.Z \
+      --build-arg BUNDLE_TAG=X.Y.Z \
+      --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+      -t ghcr.io/upri-earthquake/sender-backend:X.Y.Z \
+      -t ghcr.io/upri-earthquake/sender-backend:latest \
+      --push --provenance=false .
     ```
-2. Push the image to ghcr.io:
+2. Authenticate to ghcr.io before publishing:
     ```bash
-    docker push ghcr.io/upri-earthquake/sender-backend:X.Y.Z
+    echo "$GITHUB_TOKEN" | docker login ghcr.io -u <github-username> --password-stdin
     ```
     > ℹ️ Note: You need an access token to publish, install, and delete private, internal, and public packages in Github Packages. Refer to this [tutorial](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry) on how to authenticate to the container registry.
+
+3. Validate bundle labels on the pushed image:
+    ```bash
+    docker inspect ghcr.io/upri-earthquake/sender-backend:X.Y.Z \
+      --format '{{ index .Config.Labels "org.upri.sender.bundle.version" }} {{ index .Config.Labels "org.upri.sender.bundle.tag" }}'
+    ```
 
 ## Development Workflow: Creating New Feature
 Please refer to the [contributing guide](https://upri-earthquake.github.io/dev-guide-contributing) to the entire EarthquakeHub suite.

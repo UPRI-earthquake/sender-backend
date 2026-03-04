@@ -1,30 +1,52 @@
 #!/bin/bash
+set -u
 
-# Download sender-backend.sh and sender-frontend.sh sh-scripts from GitHub
-BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/sender-improvements/sender-backend.sh"
-FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/sender-improvements/sender-frontend.sh"
+BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/sender-backend.sh"
+FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/main/sender-frontend.sh"
 
-# Install sender-backend and sender-frontend into /usr/local/bin directory
 INSTALL_DIR="/usr/local/bin"
+HOST_SCRIPTS_DIR="${SENDER_HOST_SCRIPTS_DIR:-/opt/upri/host-scripts}"
+BACKEND_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/sender-backend"
+FRONTEND_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/sender-frontend"
 
-# Function to download and install a script
-download_and_install_script() {
-    local url=$1 script_name=$2
+download_payload() {
+    local url="$1"
+    local destination="$2"
 
-    # Download the script
-    sudo curl -sSL "$url" -o "$INSTALL_DIR/$script_name" || {
+    sudo curl -fsSL "$url" -o "$destination" || {
         echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "Failed to download script: $script_name"
-        exit 1
+        echo "Failed to download payload script from $url"
+        return 1
     }
 
-    sudo chmod +x "$INSTALL_DIR/$script_name" # Make the script executable
+    sudo chmod +x "$destination"
     echo -en "[  \e[32mOK\e[0m  ] "
-    echo "$script_name successfully downloaded and installed"
+    echo "Installed payload script at $destination"
     return 0
 }
 
-# Prompt for rebooting the device
+install_wrapper() {
+    local wrapper_path="$1"
+    local delegate_path="$2"
+    local tmp_file
+
+    tmp_file="$(mktemp /tmp/upri-wrapper.XXXXXX)" || return 1
+    cat <<WRAP > "$tmp_file"
+#!/bin/sh
+exec "$delegate_path" "\$@"
+WRAP
+
+    sudo install -m 0755 "$tmp_file" "$wrapper_path" || {
+        rm -f "$tmp_file" >/dev/null 2>&1
+        return 1
+    }
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "Installed wrapper $wrapper_path -> $delegate_path"
+    return 0
+}
+
 prompt_reboot() {
     read -rp "Reboot rshake device to apply the changes? (y/n): " choice
     case "$choice" in
@@ -40,28 +62,44 @@ prompt_reboot() {
     esac
 }
 
-# Download and install the backend script
-download_and_install_script "$BACKEND_URL" "sender-backend"
+main() {
+    sudo mkdir -p "$HOST_SCRIPTS_DIR" || {
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to prepare host script directory: $HOST_SCRIPTS_DIR"
+        exit 1
+    }
 
-# Download and install the frontend script
-download_and_install_script "$FRONTEND_URL" "sender-frontend"
+    download_payload "$BACKEND_URL" "$BACKEND_PAYLOAD_PATH" || exit 1
+    download_payload "$FRONTEND_URL" "$FRONTEND_PAYLOAD_PATH" || exit 1
 
-# sender-backend container & service installation
-sender-backend NETWORK_SETUP    && \
-sender-backend PULL             && \
-sender-backend CREATE           && \
-sudo sender-backend INSTALL_SERVICE  || {
-    echo "Error in sender-backend container download & service installation. Aborting."
-    exit 1
+    install_wrapper "${INSTALL_DIR}/sender-backend" "$BACKEND_PAYLOAD_PATH" || {
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to install sender-backend wrapper"
+        exit 1
+    }
+
+    install_wrapper "${INSTALL_DIR}/sender-frontend" "$FRONTEND_PAYLOAD_PATH" || {
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to install sender-frontend wrapper"
+        exit 1
+    }
+
+    sender-backend NETWORK_SETUP    && \
+    sender-backend PULL             && \
+    sender-backend CREATE           && \
+    sudo sender-backend INSTALL_SERVICE  || {
+        echo "Error in sender-backend container download & service installation. Aborting."
+        exit 1
+    }
+
+    sender-frontend PULL             && \
+    sender-frontend CREATE           && \
+    sudo sender-frontend INSTALL_SERVICE  || {
+        echo "Error in sender-frontend container & service installation. Aborting."
+        exit 1
+    }
+
+    prompt_reboot
 }
 
-# sender-frontend container & service installation
-sender-frontend PULL             && \
-sender-frontend CREATE           && \
-sudo sender-frontend INSTALL_SERVICE  || {
-    echo "Error in sender-frontend container & service installation. Aborting."
-    exit 1
-}
-
-# Prompt for reboot to start the new services
-prompt_reboot
+main

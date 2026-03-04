@@ -34,6 +34,16 @@ function buildAlertUrl() {
   return `${baseUrl}${normalizeAlertPath()}`;
 }
 
+function buildAlertHeaders() {
+  const sharedSecret = String(process.env.RSHAKE_ALERT_SHARED_SECRET || '').trim();
+  if (!sharedSecret) {
+    return undefined;
+  }
+  return {
+    'X-RShake-Alert-Secret': sharedSecret,
+  };
+}
+
 function sanitizeIdentifier(value) {
   return String(value || '')
     .trim()
@@ -151,8 +161,16 @@ async function postRshakeAlert({
 
   const timeout = Number(process.env.RSHAKE_ALERT_POST_TIMEOUT_MS || DEFAULT_POST_TIMEOUT_MS);
   try {
-    const response = await axios.post(buildAlertUrl(), payload, {
+    const requestOptions = {
       timeout: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_POST_TIMEOUT_MS,
+    };
+    const headers = buildAlertHeaders();
+    if (headers) {
+      requestOptions.headers = headers;
+    }
+
+    const response = await axios.post(buildAlertUrl(), payload, {
+      ...requestOptions,
     });
     return { str: 'success', status: response.status };
   } catch (error) {

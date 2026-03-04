@@ -58,6 +58,7 @@ services:
       PUBLIC_VAPID_KEY: ${PUBLIC_VAPID_KEY}
       PRIVATE_VAPID_KEY: ${PRIVATE_VAPID_KEY}
       WEB_PUSH_CONTACT: ${WEB_PUSH_CONTACT}
+      RSHAKE_ALERT_SHARED_SECRET: ${RSHAKE_ALERT_SHARED_SECRET}
     depends_on:
       - "mongodb_sender-backend_dep-test"
     image: "ghcr.io/upri-earthquake/earthquake-hub-backend:latest"
