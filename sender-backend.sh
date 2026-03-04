@@ -10,6 +10,10 @@ UPDATE_SERVICE="sender-backend-update.service"
 UPDATE_TIMER="sender-backend-update.timer"
 UPDATE_SERVICE_FILE="/lib/systemd/system/$UPDATE_SERVICE"
 UPDATE_TIMER_FILE="/lib/systemd/system/$UPDATE_TIMER"
+WATCHDOG_SERVICE="sender-stack-watchdog.service"
+WATCHDOG_TIMER="sender-stack-watchdog.timer"
+WATCHDOG_SERVICE_FILE="/lib/systemd/system/$WATCHDOG_SERVICE"
+WATCHDOG_TIMER_FILE="/lib/systemd/system/$WATCHDOG_TIMER"
 
 SENDER_BUNDLE_TAG_DEFAULT="latest"
 SENDER_BACKEND_IMAGE_REPO_DEFAULT="ghcr.io/upri-earthquake/sender-backend"
@@ -45,6 +49,15 @@ DISK_ALERT_CRITICAL_FREE_PCT_DEFAULT=8
 DISK_ALERT_RECOVERY_FREE_PCT_DEFAULT=20
 DISK_ALERT_PATHS_DEFAULT="/,/app/localDBs"
 DISK_ALERT_STATE_FILE_DEFAULT="/var/lib/upri-sender/disk-alert-state.env"
+WATCHDOG_ENABLED_DEFAULT="true"
+WATCHDOG_INTERVAL_MINUTES_DEFAULT=5
+WATCHDOG_BACKEND_STOPPED_MAX_SEC_DEFAULT=900
+WATCHDOG_FRONTEND_STOPPED_MAX_SEC_DEFAULT=900
+WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC_DEFAULT=900
+WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC_DEFAULT=900
+WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT=300
+WATCHDOG_STATE_FILE_DEFAULT="/var/lib/upri-sender/watchdog-state.env"
+WATCHDOG_LOCK_FILE_DEFAULT="/tmp/upri-sender-maintenance.lock"
 LAST_PULL_RESULT="unknown"
 AUTO_UPDATE_STATE_FILE_DEFAULT="/var/lib/upri-sender/update-state.json"
 AUTO_UPDATE_STATE_FILE="${AUTO_UPDATE_STATE_FILE:-$AUTO_UPDATE_STATE_FILE_DEFAULT}"
@@ -54,6 +67,15 @@ DISK_ALERT_CRITICAL_FREE_PCT="${DISK_ALERT_CRITICAL_FREE_PCT:-$DISK_ALERT_CRITIC
 DISK_ALERT_RECOVERY_FREE_PCT="${DISK_ALERT_RECOVERY_FREE_PCT:-$DISK_ALERT_RECOVERY_FREE_PCT_DEFAULT}"
 DISK_ALERT_PATHS="${DISK_ALERT_PATHS:-$DISK_ALERT_PATHS_DEFAULT}"
 DISK_ALERT_STATE_FILE="${DISK_ALERT_STATE_FILE:-$DISK_ALERT_STATE_FILE_DEFAULT}"
+WATCHDOG_ENABLED="${WATCHDOG_ENABLED:-$WATCHDOG_ENABLED_DEFAULT}"
+WATCHDOG_INTERVAL_MINUTES="${WATCHDOG_INTERVAL_MINUTES:-$WATCHDOG_INTERVAL_MINUTES_DEFAULT}"
+WATCHDOG_BACKEND_STOPPED_MAX_SEC="${WATCHDOG_BACKEND_STOPPED_MAX_SEC:-$WATCHDOG_BACKEND_STOPPED_MAX_SEC_DEFAULT}"
+WATCHDOG_FRONTEND_STOPPED_MAX_SEC="${WATCHDOG_FRONTEND_STOPPED_MAX_SEC:-$WATCHDOG_FRONTEND_STOPPED_MAX_SEC_DEFAULT}"
+WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC="${WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC:-$WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC_DEFAULT}"
+WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC="${WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC:-$WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC_DEFAULT}"
+WATCHDOG_RESTART_COOLDOWN_SEC="${WATCHDOG_RESTART_COOLDOWN_SEC:-$WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT}"
+WATCHDOG_STATE_FILE="${WATCHDOG_STATE_FILE:-$WATCHDOG_STATE_FILE_DEFAULT}"
+WATCHDOG_LOCK_FILE="${WATCHDOG_LOCK_FILE:-$WATCHDOG_LOCK_FILE_DEFAULT}"
 
 SENDER_SCRIPT_AUTO_UPDATE_ENABLED_DEFAULT="deprecated"
 SENDER_BACKEND_SCRIPT_URL_DEFAULT="deprecated"
@@ -75,6 +97,13 @@ DISK_ALERT_LAST_PATH=""
 DISK_ALERT_LAST_FREE_PCT=100
 DISK_ALERT_LAST_CHECK_AT=""
 DISK_ALERT_STATE_FILE_PATH="$DISK_ALERT_STATE_FILE"
+WATCHDOG_STATE_FILE_PATH="$WATCHDOG_STATE_FILE"
+WATCHDOG_BACKEND_STOPPED_SINCE=0
+WATCHDOG_FRONTEND_STOPPED_SINCE=0
+WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
+WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
+WATCHDOG_BACKEND_LAST_RESTART_TS=0
+WATCHDOG_FRONTEND_LAST_RESTART_TS=0
 
 function json_escape() {
     local value="$1"
@@ -615,6 +644,551 @@ function evaluate_and_post_disk_space_alert() {
         "$message_type" \
         "$status_value"
     return 0
+}
+
+function normalize_positive_int() {
+    local raw="$1"
+    local fallback="$2"
+    local min_value="${3:-0}"
+
+    if [[ "$raw" =~ ^[0-9]+$ ]] && (( raw >= min_value )); then
+        printf "%s" "$raw"
+        return 0
+    fi
+    printf "%s" "$fallback"
+}
+
+function is_truthy() {
+    local value
+    value="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+    [[ "$value" == "1" || "$value" == "true" || "$value" == "yes" || "$value" == "on" ]]
+}
+
+function resolve_watchdog_state_file_path() {
+    local state_file="$WATCHDOG_STATE_FILE"
+    local state_dir
+
+    state_dir="$(dirname "$state_file")"
+    if mkdir -p "$state_dir" >/dev/null 2>&1; then
+        printf "%s" "$state_file"
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$state_dir" >/dev/null 2>&1; then
+        printf "%s" "$state_file"
+        return 0
+    fi
+
+    printf "/tmp/upri-sender/watchdog-state.env"
+}
+
+function load_watchdog_state() {
+    local state_path key value
+
+    WATCHDOG_BACKEND_STOPPED_SINCE=0
+    WATCHDOG_FRONTEND_STOPPED_SINCE=0
+    WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
+    WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
+    WATCHDOG_BACKEND_LAST_RESTART_TS=0
+    WATCHDOG_FRONTEND_LAST_RESTART_TS=0
+
+    state_path="$(resolve_watchdog_state_file_path)"
+    WATCHDOG_STATE_FILE_PATH="$state_path"
+
+    if [[ ! -r "$state_path" ]]; then
+        return 0
+    fi
+
+    while IFS='=' read -r key value; do
+        case "$key" in
+            WATCHDOG_BACKEND_STOPPED_SINCE)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_BACKEND_STOPPED_SINCE="$value"; fi
+                ;;
+            WATCHDOG_FRONTEND_STOPPED_SINCE)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_FRONTEND_STOPPED_SINCE="$value"; fi
+                ;;
+            WATCHDOG_BACKEND_UNHEALTHY_SINCE)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_BACKEND_UNHEALTHY_SINCE="$value"; fi
+                ;;
+            WATCHDOG_FRONTEND_UNHEALTHY_SINCE)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_FRONTEND_UNHEALTHY_SINCE="$value"; fi
+                ;;
+            WATCHDOG_BACKEND_LAST_RESTART_TS)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_BACKEND_LAST_RESTART_TS="$value"; fi
+                ;;
+            WATCHDOG_FRONTEND_LAST_RESTART_TS)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_FRONTEND_LAST_RESTART_TS="$value"; fi
+                ;;
+        esac
+    done < "$state_path"
+}
+
+function write_watchdog_state() {
+    local state_path tmp_file
+
+    state_path="$(resolve_watchdog_state_file_path)"
+    WATCHDOG_STATE_FILE_PATH="$state_path"
+
+    tmp_file="$(mktemp "/tmp/upri-sender-watchdog-state.XXXXXX.env")" || return 1
+    cat <<EOF > "$tmp_file"
+WATCHDOG_BACKEND_STOPPED_SINCE=$WATCHDOG_BACKEND_STOPPED_SINCE
+WATCHDOG_FRONTEND_STOPPED_SINCE=$WATCHDOG_FRONTEND_STOPPED_SINCE
+WATCHDOG_BACKEND_UNHEALTHY_SINCE=$WATCHDOG_BACKEND_UNHEALTHY_SINCE
+WATCHDOG_FRONTEND_UNHEALTHY_SINCE=$WATCHDOG_FRONTEND_UNHEALTHY_SINCE
+WATCHDOG_BACKEND_LAST_RESTART_TS=$WATCHDOG_BACKEND_LAST_RESTART_TS
+WATCHDOG_FRONTEND_LAST_RESTART_TS=$WATCHDOG_FRONTEND_LAST_RESTART_TS
+EOF
+
+    if ! install_data_payload "$tmp_file" "$state_path" 0644; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Failed to write watchdog state to $state_path."
+        return 1
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    return 0
+}
+
+function container_exists_by_name() {
+    local container_name="$1"
+    docker inspect "$container_name" >/dev/null 2>&1
+}
+
+function container_running_by_name() {
+    local container_name="$1"
+    [[ "$(docker inspect --format='{{.State.Running}}' "$container_name" 2>/dev/null)" == "true" ]]
+}
+
+function container_health_status_by_name() {
+    local container_name="$1"
+    local health_status
+    health_status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_name" 2>/dev/null || true)"
+    if [[ -z "$health_status" ]]; then
+        printf "none"
+        return 0
+    fi
+    printf "%s" "$health_status"
+}
+
+function ensure_container_restart_policy() {
+    local container_name="$1"
+    if ! container_exists_by_name "$container_name"; then
+        return 0
+    fi
+    if docker update --restart unless-stopped "$container_name" >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -en "[\e[1;33mWARN\e[0m] "
+    echo "Unable to enforce restart policy for container $container_name."
+    return 1
+}
+
+function post_watchdog_alert() {
+    local alert_code="$1"
+    local severity="$2"
+    local summary="$3"
+    local message_type="$4"
+    local status_value="$5"
+    local container_name="$6"
+    local trigger_reason="$7"
+    local action_result="$8"
+    local elapsed_sec="$9"
+    local threshold_sec="${10}"
+    local cooldown_sec="${11}"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "curl is unavailable; skipping watchdog alert post."
+        return 0
+    fi
+
+    local network station mac stream_id message_id occurred_at endpoint timeout_sec dedupe_key schema_version
+    local device_json first_field payload
+    network="$(read_device_value /opt/settings/sys/NET.txt)"
+    station="$(read_device_value /opt/settings/sys/STN.txt)"
+    mac="$(read_device_value /opt/settings/sys/eth-mac.txt)"
+    stream_id="${network}_${station}_.*/MSEED"
+
+    if [[ -z "${network}${station}${mac}" ]]; then
+        local host_fallback
+        host_fallback="$(hostname 2>/dev/null || true)"
+        if [[ -z "$host_fallback" ]]; then
+            host_fallback="sender-backend"
+        fi
+        stream_id="WATCHDOG_${host_fallback}"
+    fi
+
+    occurred_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        message_id="$(cat /proc/sys/kernel/random/uuid)"
+    else
+        message_id="$(date +%s%N)-$RANDOM"
+    fi
+
+    endpoint="${AUTO_UPDATE_ALERT_ENDPOINT:-$AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT}"
+    timeout_sec="${AUTO_UPDATE_ALERT_TIMEOUT_SEC:-$AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT}"
+    schema_version="${RSHAKE_ALERT_SCHEMA_VERSION:-1.0}"
+    dedupe_key="watchdog.$(sanitize_token "${station:-$stream_id}").$(sanitize_token "$container_name").$(sanitize_token "$alert_code")"
+
+    device_json="{"
+    first_field=1
+    if [[ -n "$network" ]]; then
+        device_json="${device_json}\"network\":\"$(json_escape "$network")\""
+        first_field=0
+    fi
+    if [[ -n "$station" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"station\":\"$(json_escape "$station")\""
+        first_field=0
+    fi
+    if [[ -n "$stream_id" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"streamId\":\"$(json_escape "$stream_id")\""
+        first_field=0
+    fi
+    if [[ -n "$mac" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"macAddress\":\"$(json_escape "$mac")\""
+        first_field=0
+    fi
+    if [[ $first_field -eq 1 ]]; then
+        device_json="${device_json}\"streamId\":\"WATCHDOG_SENDER\""
+    fi
+    device_json="${device_json}}"
+
+    payload=$(cat <<EOF
+{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"$(json_escape "$message_type")","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"$(json_escape "$status_value")","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-watchdog","notificationScope":"admin-only","container":"$(json_escape "$container_name")","triggerReason":"$(json_escape "$trigger_reason")","actionResult":"$(json_escape "$action_result")","elapsedSec":$elapsed_sec,"thresholdSec":$threshold_sec,"restartCooldownSec":$cooldown_sec},"dedupeKey":"$(json_escape "$dedupe_key")"}
+EOF
+)
+
+    local -a secret_header_args=()
+    if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
+        secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
+    fi
+
+    if curl --silent --show-error --max-time "$timeout_sec" \
+        -H "Content-Type: application/json" \
+        "${secret_header_args[@]}" \
+        -X POST "$endpoint" \
+        -d "$payload" >/dev/null; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Watchdog alert ($alert_code) posted for $container_name."
+        return 0
+    fi
+
+    echo -en "[\e[1;33mWARN\e[0m] "
+    echo "Failed to post watchdog alert ($alert_code) for $container_name."
+    return 0
+}
+
+function can_attempt_watchdog_restart() {
+    local last_restart_ts="$1"
+    local now_epoch="$2"
+    local cooldown_sec="$3"
+
+    if (( last_restart_ts <= 0 )); then
+        return 0
+    fi
+    if (( now_epoch - last_restart_ts >= cooldown_sec )); then
+        return 0
+    fi
+    return 1
+}
+
+function attempt_backend_watchdog_recovery() {
+    local mode="$1"
+    local target_ref="${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
+
+    if [[ "$mode" == "restart" ]]; then
+        stop_container >/dev/null 2>&1 || true
+    fi
+
+    if container_exists_by_name "$CONTAINER"; then
+        start_container "$target_ref" >/dev/null 2>&1 || return 1
+    else
+        create_network >/dev/null 2>&1 || return 1
+        create_container "auto" "$target_ref" >/dev/null 2>&1 || return 1
+        start_container "$LAST_BACKEND_IMAGE_REF" >/dev/null 2>&1 || return 1
+    fi
+
+    ensure_container_restart_policy "$CONTAINER" >/dev/null 2>&1 || true
+    return 0
+}
+
+function attempt_frontend_watchdog_recovery() {
+    local mode="$1"
+    local target_ref="${SENDER_FRONTEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
+
+    if ! command -v sender-frontend >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if [[ "$mode" == "restart" ]]; then
+        sender-frontend STOP >/dev/null 2>&1 || true
+    fi
+
+    if container_exists_by_name "sender-frontend"; then
+        sender-frontend START >/dev/null 2>&1 || return 1
+    else
+        sender-frontend NETWORK_SETUP >/dev/null 2>&1 || return 1
+        sender-frontend CREATE "$target_ref" >/dev/null 2>&1 || return 1
+        sender-frontend START >/dev/null 2>&1 || return 1
+    fi
+
+    ensure_container_restart_policy "sender-frontend" >/dev/null 2>&1 || true
+    return 0
+}
+
+function evaluate_backend_watchdog() {
+    local now_epoch="$1"
+    local stopped_threshold_sec="$2"
+    local unhealthy_threshold_sec="$3"
+    local restart_cooldown_sec="$4"
+    local elapsed
+    local health_status
+
+    if ! container_exists_by_name "$CONTAINER"; then
+        if (( WATCHDOG_BACKEND_STOPPED_SINCE == 0 )); then
+            WATCHDOG_BACKEND_STOPPED_SINCE="$now_epoch"
+            return 0
+        fi
+        elapsed=$((now_epoch - WATCHDOG_BACKEND_STOPPED_SINCE))
+        if (( elapsed < stopped_threshold_sec )); then
+            return 0
+        fi
+        if ! can_attempt_watchdog_restart "$WATCHDOG_BACKEND_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+            return 0
+        fi
+        if attempt_backend_watchdog_recovery "start"; then
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTARTED" "info" "Watchdog restarted sender-backend container." "device.recovery" "Recovered" "$CONTAINER" "missing" "start-success" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+            WATCHDOG_BACKEND_STOPPED_SINCE=0
+            WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
+        else
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTART_FAILED" "warning" "Watchdog failed to restart sender-backend container." "device.alert" "Error" "$CONTAINER" "missing" "start-failed" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+        fi
+        WATCHDOG_BACKEND_LAST_RESTART_TS="$now_epoch"
+        return 0
+    fi
+
+    ensure_container_restart_policy "$CONTAINER" >/dev/null 2>&1 || true
+
+    if ! container_running_by_name "$CONTAINER"; then
+        if (( WATCHDOG_BACKEND_STOPPED_SINCE == 0 )); then
+            WATCHDOG_BACKEND_STOPPED_SINCE="$now_epoch"
+            return 0
+        fi
+        elapsed=$((now_epoch - WATCHDOG_BACKEND_STOPPED_SINCE))
+        if (( elapsed < stopped_threshold_sec )); then
+            return 0
+        fi
+        if ! can_attempt_watchdog_restart "$WATCHDOG_BACKEND_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+            return 0
+        fi
+        if attempt_backend_watchdog_recovery "start"; then
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTARTED" "info" "Watchdog started stopped sender-backend container." "device.recovery" "Recovered" "$CONTAINER" "stopped" "start-success" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+            WATCHDOG_BACKEND_STOPPED_SINCE=0
+            WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
+        else
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTART_FAILED" "warning" "Watchdog failed to start stopped sender-backend container." "device.alert" "Error" "$CONTAINER" "stopped" "start-failed" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+        fi
+        WATCHDOG_BACKEND_LAST_RESTART_TS="$now_epoch"
+        return 0
+    fi
+
+    WATCHDOG_BACKEND_STOPPED_SINCE=0
+    health_status="$(container_health_status_by_name "$CONTAINER")"
+    if [[ "$health_status" != "unhealthy" ]]; then
+        WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
+        return 0
+    fi
+
+    if (( WATCHDOG_BACKEND_UNHEALTHY_SINCE == 0 )); then
+        WATCHDOG_BACKEND_UNHEALTHY_SINCE="$now_epoch"
+        return 0
+    fi
+    elapsed=$((now_epoch - WATCHDOG_BACKEND_UNHEALTHY_SINCE))
+    if (( elapsed < unhealthy_threshold_sec )); then
+        return 0
+    fi
+    if ! can_attempt_watchdog_restart "$WATCHDOG_BACKEND_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+        return 0
+    fi
+    if attempt_backend_watchdog_recovery "restart"; then
+        post_watchdog_alert "WATCHDOG_CONTAINER_RESTARTED" "info" "Watchdog restarted unhealthy sender-backend container." "device.recovery" "Recovered" "$CONTAINER" "unhealthy" "restart-success" "$elapsed" "$unhealthy_threshold_sec" "$restart_cooldown_sec"
+        WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
+    else
+        post_watchdog_alert "WATCHDOG_CONTAINER_RESTART_FAILED" "warning" "Watchdog failed to restart unhealthy sender-backend container." "device.alert" "Error" "$CONTAINER" "unhealthy" "restart-failed" "$elapsed" "$unhealthy_threshold_sec" "$restart_cooldown_sec"
+    fi
+    WATCHDOG_BACKEND_LAST_RESTART_TS="$now_epoch"
+    return 0
+}
+
+function evaluate_frontend_watchdog() {
+    local now_epoch="$1"
+    local stopped_threshold_sec="$2"
+    local unhealthy_threshold_sec="$3"
+    local restart_cooldown_sec="$4"
+    local elapsed
+    local health_status
+    local container_name="sender-frontend"
+
+    if ! container_exists_by_name "$container_name"; then
+        if (( WATCHDOG_FRONTEND_STOPPED_SINCE == 0 )); then
+            WATCHDOG_FRONTEND_STOPPED_SINCE="$now_epoch"
+            return 0
+        fi
+        elapsed=$((now_epoch - WATCHDOG_FRONTEND_STOPPED_SINCE))
+        if (( elapsed < stopped_threshold_sec )); then
+            return 0
+        fi
+        if ! can_attempt_watchdog_restart "$WATCHDOG_FRONTEND_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+            return 0
+        fi
+        if attempt_frontend_watchdog_recovery "start"; then
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTARTED" "info" "Watchdog restarted sender-frontend container." "device.recovery" "Recovered" "$container_name" "missing" "start-success" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+            WATCHDOG_FRONTEND_STOPPED_SINCE=0
+            WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
+        else
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTART_FAILED" "warning" "Watchdog failed to restart sender-frontend container." "device.alert" "Error" "$container_name" "missing" "start-failed" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+        fi
+        WATCHDOG_FRONTEND_LAST_RESTART_TS="$now_epoch"
+        return 0
+    fi
+
+    ensure_container_restart_policy "$container_name" >/dev/null 2>&1 || true
+
+    if ! container_running_by_name "$container_name"; then
+        if (( WATCHDOG_FRONTEND_STOPPED_SINCE == 0 )); then
+            WATCHDOG_FRONTEND_STOPPED_SINCE="$now_epoch"
+            return 0
+        fi
+        elapsed=$((now_epoch - WATCHDOG_FRONTEND_STOPPED_SINCE))
+        if (( elapsed < stopped_threshold_sec )); then
+            return 0
+        fi
+        if ! can_attempt_watchdog_restart "$WATCHDOG_FRONTEND_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+            return 0
+        fi
+        if attempt_frontend_watchdog_recovery "start"; then
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTARTED" "info" "Watchdog started stopped sender-frontend container." "device.recovery" "Recovered" "$container_name" "stopped" "start-success" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+            WATCHDOG_FRONTEND_STOPPED_SINCE=0
+            WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
+        else
+            post_watchdog_alert "WATCHDOG_CONTAINER_RESTART_FAILED" "warning" "Watchdog failed to start stopped sender-frontend container." "device.alert" "Error" "$container_name" "stopped" "start-failed" "$elapsed" "$stopped_threshold_sec" "$restart_cooldown_sec"
+        fi
+        WATCHDOG_FRONTEND_LAST_RESTART_TS="$now_epoch"
+        return 0
+    fi
+
+    WATCHDOG_FRONTEND_STOPPED_SINCE=0
+    health_status="$(container_health_status_by_name "$container_name")"
+    if [[ "$health_status" != "unhealthy" ]]; then
+        WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
+        return 0
+    fi
+
+    if (( WATCHDOG_FRONTEND_UNHEALTHY_SINCE == 0 )); then
+        WATCHDOG_FRONTEND_UNHEALTHY_SINCE="$now_epoch"
+        return 0
+    fi
+    elapsed=$((now_epoch - WATCHDOG_FRONTEND_UNHEALTHY_SINCE))
+    if (( elapsed < unhealthy_threshold_sec )); then
+        return 0
+    fi
+    if ! can_attempt_watchdog_restart "$WATCHDOG_FRONTEND_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+        return 0
+    fi
+    if attempt_frontend_watchdog_recovery "restart"; then
+        post_watchdog_alert "WATCHDOG_CONTAINER_RESTARTED" "info" "Watchdog restarted unhealthy sender-frontend container." "device.recovery" "Recovered" "$container_name" "unhealthy" "restart-success" "$elapsed" "$unhealthy_threshold_sec" "$restart_cooldown_sec"
+        WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
+    else
+        post_watchdog_alert "WATCHDOG_CONTAINER_RESTART_FAILED" "warning" "Watchdog failed to restart unhealthy sender-frontend container." "device.alert" "Error" "$container_name" "unhealthy" "restart-failed" "$elapsed" "$unhealthy_threshold_sec" "$restart_cooldown_sec"
+    fi
+    WATCHDOG_FRONTEND_LAST_RESTART_TS="$now_epoch"
+    return 0
+}
+
+function watchdog_check() {
+    local now_epoch
+    local stopped_backend_threshold
+    local stopped_frontend_threshold
+    local unhealthy_backend_threshold
+    local unhealthy_frontend_threshold
+    local restart_cooldown_sec
+
+    if ! is_truthy "$WATCHDOG_ENABLED"; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Watchdog is disabled (WATCHDOG_ENABLED=$WATCHDOG_ENABLED)."
+        return 0
+    fi
+
+    stopped_backend_threshold="$(normalize_positive_int "$WATCHDOG_BACKEND_STOPPED_MAX_SEC" "$WATCHDOG_BACKEND_STOPPED_MAX_SEC_DEFAULT" 30)"
+    stopped_frontend_threshold="$(normalize_positive_int "$WATCHDOG_FRONTEND_STOPPED_MAX_SEC" "$WATCHDOG_FRONTEND_STOPPED_MAX_SEC_DEFAULT" 30)"
+    unhealthy_backend_threshold="$(normalize_positive_int "$WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC" "$WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC_DEFAULT" 30)"
+    unhealthy_frontend_threshold="$(normalize_positive_int "$WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC" "$WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC_DEFAULT" 30)"
+    restart_cooldown_sec="$(normalize_positive_int "$WATCHDOG_RESTART_COOLDOWN_SEC" "$WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT" 30)"
+
+    now_epoch="$(date +%s)"
+    load_watchdog_state
+    evaluate_backend_watchdog "$now_epoch" "$stopped_backend_threshold" "$unhealthy_backend_threshold" "$restart_cooldown_sec"
+    evaluate_frontend_watchdog "$now_epoch" "$stopped_frontend_threshold" "$unhealthy_frontend_threshold" "$restart_cooldown_sec"
+    write_watchdog_state || true
+    return 0
+}
+
+function run_with_maintenance_lock() {
+    local mode="$1"
+    local wait_sec="$2"
+    shift 2
+
+    if ! command -v flock >/dev/null 2>&1; then
+        "$@"
+        return $?
+    fi
+
+    mkdir -p "$(dirname "$WATCHDOG_LOCK_FILE")" >/dev/null 2>&1 || true
+    exec {lock_fd}> "$WATCHDOG_LOCK_FILE" || {
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Unable to open maintenance lock file $WATCHDOG_LOCK_FILE; running without lock."
+        "$@"
+        return $?
+    }
+
+    if [[ "$mode" == "wait" ]]; then
+        if ! flock -w "$wait_sec" "$lock_fd"; then
+            echo -en "[\e[1;33mWARN\e[0m] "
+            echo "Could not acquire maintenance lock within ${wait_sec}s."
+            eval "exec ${lock_fd}>&-"
+            return 1
+        fi
+    else
+        if ! flock -n "$lock_fd"; then
+            echo -en "[\e[1;33mWARN\e[0m] "
+            echo "Maintenance lock is busy; skipping operation."
+            eval "exec ${lock_fd}>&-"
+            return 0
+        fi
+    fi
+
+    "$@"
+    local cmd_exit=$?
+    flock -u "$lock_fd" >/dev/null 2>&1 || true
+    eval "exec ${lock_fd}>&-"
+    return $cmd_exit
+}
+
+function run_update_stack_with_lock() {
+    run_with_maintenance_lock "wait" 1800 update_stack_with_alert
+}
+
+function run_watchdog_check_with_lock() {
+    run_with_maintenance_lock "skip" 0 watchdog_check
 }
 
 function warn_deprecated_script_update_envs() {
@@ -1502,12 +2076,72 @@ EOF
     if systemctl enable --now "$UPDATE_TIMER" >/dev/null 2>&1; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "$UPDATE_TIMER enabled and started."
-        return 0
+        install_watchdog_timer
+        return $?
     else
         echo -en "[\e[1;31mFAILED\e[0m] "
         echo "Failed to enable or start $UPDATE_TIMER."
         return 1
     fi
+}
+
+function install_watchdog_timer() {
+    local interval_minutes
+
+    interval_minutes="$(normalize_positive_int "$WATCHDOG_INTERVAL_MINUTES" "$WATCHDOG_INTERVAL_MINUTES_DEFAULT" 1)"
+
+    cat <<EOF > "$WATCHDOG_SERVICE_FILE"
+[Unit]
+Description=UPRI: Sender Stack Watchdog Service
+ConditionPathExists=/usr/local/bin/sender-backend
+ConditionPathExists=/usr/local/bin/sender-frontend
+Wants=docker.service network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=myshake
+ExecStart=/usr/local/bin/sender-backend WATCHDOG_CHECK
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    if [[ $? -ne 0 ]]; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to write $WATCHDOG_SERVICE_FILE."
+        return 1
+    fi
+
+    cat <<EOF > "$WATCHDOG_TIMER_FILE"
+[Unit]
+Description=UPRI: Sender Stack Watchdog Timer
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=${interval_minutes}m
+RandomizedDelaySec=45s
+Unit=$WATCHDOG_SERVICE
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    if [[ $? -ne 0 ]]; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to write $WATCHDOG_TIMER_FILE."
+        return 1
+    fi
+
+    systemctl daemon-reload
+    if systemctl enable --now "$WATCHDOG_TIMER" >/dev/null 2>&1; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "$WATCHDOG_TIMER enabled and started."
+        return 0
+    fi
+
+    echo -en "[\e[1;31mFAILED\e[0m] "
+    echo "Failed to enable or start $WATCHDOG_TIMER."
+    return 1
 }
 
 function uninstall_update_timer() {
@@ -1516,6 +2150,9 @@ function uninstall_update_timer() {
 
     sudo systemctl stop "$UPDATE_TIMER" >/dev/null 2>&1
     sudo systemctl disable "$UPDATE_TIMER" >/dev/null 2>&1
+    if ! uninstall_watchdog_timer; then
+        failed=1
+    fi
 
     if [[ -f "$UPDATE_TIMER_FILE" ]]; then
         if sudo rm -f "$UPDATE_TIMER_FILE"; then
@@ -1552,6 +2189,53 @@ function uninstall_update_timer() {
         echo "Auto-update timer removed."
     else
         echo "Auto-update timer already removed."
+    fi
+    return 0
+}
+
+function uninstall_watchdog_timer() {
+    local removed=0
+    local failed=0
+    local state_path
+
+    sudo systemctl stop "$WATCHDOG_TIMER" >/dev/null 2>&1
+    sudo systemctl disable "$WATCHDOG_TIMER" >/dev/null 2>&1
+
+    if [[ -f "$WATCHDOG_TIMER_FILE" ]]; then
+        if sudo rm -f "$WATCHDOG_TIMER_FILE"; then
+            removed=1
+        else
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "Failed to remove $WATCHDOG_TIMER_FILE."
+            failed=1
+        fi
+    fi
+
+    if [[ -f "$WATCHDOG_SERVICE_FILE" ]]; then
+        if sudo rm -f "$WATCHDOG_SERVICE_FILE"; then
+            removed=1
+        else
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "Failed to remove $WATCHDOG_SERVICE_FILE."
+            failed=1
+        fi
+    fi
+
+    state_path="$(resolve_watchdog_state_file_path)"
+    if [[ -f "$state_path" ]]; then
+        sudo rm -f "$state_path" >/dev/null 2>&1 || true
+    fi
+    if [[ "$state_path" != "/tmp/upri-sender/watchdog-state.env" && -f "/tmp/upri-sender/watchdog-state.env" ]]; then
+        sudo rm -f "/tmp/upri-sender/watchdog-state.env" >/dev/null 2>&1 || true
+    fi
+
+    if [[ $failed -eq 1 ]]; then
+        return 1
+    fi
+
+    if [[ $removed -eq 1 ]]; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Watchdog timer removed."
     fi
     return 0
 }
@@ -1666,6 +2350,7 @@ function create_container() {
         # TODO: Change W1_PROD_IP to earthquake-hub domain /api (for production)
         docker create \
             --name "$CONTAINER" \
+            --restart unless-stopped \
             --add-host "$in_docker_hostname:$host_ip" \
             --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \
             --volume /opt/settings:/opt/settings:ro \
@@ -1706,6 +2391,7 @@ function start_container() {
     if [[ $(docker inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Container $CONTAINER is already running."
+        ensure_container_restart_policy "$CONTAINER" >/dev/null 2>&1 || true
         return 0
     else
         docker start "$CONTAINER"
@@ -1717,6 +2403,7 @@ function start_container() {
 
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Container $CONTAINER started successfully."
+        ensure_container_restart_policy "$CONTAINER" >/dev/null 2>&1 || true
 
         if check_container_dns_resolution; then
             return 0
@@ -1929,7 +2616,10 @@ case $1 in
         update_container_with_state "$2"
         ;;
     "UPDATE_STACK")
-        update_stack_with_alert
+        run_update_stack_with_lock
+        ;;
+    "WATCHDOG_CHECK")
+        run_watchdog_check_with_lock
         ;;
     "STOP")
         stop_container
@@ -1955,7 +2645,13 @@ case $1 in
     "UNINSTALL_UPDATE_TIMER")
         uninstall_update_timer
         ;;
+    "INSTALL_WATCHDOG_TIMER")
+        install_watchdog_timer
+        ;;
+    "UNINSTALL_WATCHDOG_TIMER")
+        uninstall_watchdog_timer
+        ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|INSTALL_WATCHDOG_TIMER|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|WATCHDOG_CHECK|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER|UNINSTALL_WATCHDOG_TIMER]"
         ;;
 esac

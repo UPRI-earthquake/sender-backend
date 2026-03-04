@@ -80,12 +80,21 @@ State snapshots are written to `/var/lib/upri-sender/update-state.json` (fallbac
 Sender posts admin-only RShake alerts for:
 - Disk monitor (runs with daily `UPDATE_STACK` timer): `DISK_SPACE_WARN`, `DISK_SPACE_CRITICAL`, `DISK_SPACE_RECOVERY`
 - Proactive token refresh scheduler: `TOKEN_REFRESH_FAILED`, `TOKEN_REFRESH_RECOVERY`, `TOKEN_REFRESH_SUCCESS`
+- Stack watchdog timer: `WATCHDOG_CONTAINER_RESTARTED`, `WATCHDOG_CONTAINER_RESTART_FAILED`
 
 Useful env controls:
 - `DISK_ALERT_PATHS`, `DISK_ALERT_WARN_FREE_PCT`, `DISK_ALERT_CRITICAL_FREE_PCT`, `DISK_ALERT_RECOVERY_FREE_PCT`
 - `TOKEN_REFRESH_FAILED_CONSECUTIVE_THRESHOLD`, `TOKEN_REFRESH_SUCCESS_COOLDOWN_SEC`
+- `WATCHDOG_ENABLED`, `WATCHDOG_INTERVAL_MINUTES`, `WATCHDOG_BACKEND_STOPPED_MAX_SEC`, `WATCHDOG_FRONTEND_STOPPED_MAX_SEC`
 
 All of the above include `details.notificationScope=admin-only` and are posted to `W1_RS_ALERT_PATH` (default `/messaging/restricted/rshake-alert`).
+
+### Stack Watchdog
+`sender-backend INSTALL_SERVICE` now installs two timers:
+- Daily updater timer (`sender-backend-update.timer`)
+- Periodic watchdog timer (`sender-stack-watchdog.timer`)
+
+The watchdog checks backend/frontend container runtime state and attempts start/restart after configured inactivity thresholds. It also enforces Docker restart policy `unless-stopped` on both containers.
 
 ### RShake settings fixtures for dev
 - `dev/settings` mirrors the `/opt/settings` layout of an RShake (including `sys` files plus `config/config.json` and `config/MD-info.json` from the screenshots). The compose file mounts this tree to `/opt/settings`, matching the default `RSHAKE_SETTINGS_PATH`.

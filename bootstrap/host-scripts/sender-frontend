@@ -156,6 +156,19 @@ function get_image_label() {
     printf "%s" "$value"
 }
 
+function ensure_container_restart_policy() {
+    local container_name="$1"
+    if ! docker inspect "$container_name" >/dev/null 2>&1; then
+        return 0
+    fi
+    if docker update --restart unless-stopped "$container_name" >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -en "[\e[1;33mWARN\e[0m] "
+    echo "Unable to enforce restart policy for container $container_name."
+    return 1
+}
+
 function read_backend_update_state() {
     BACKEND_STATE_PRESENT=0
     BACKEND_EXIT=1
@@ -500,6 +513,7 @@ function create_container() {
         # create container
         docker create \
             --name "$CONTAINER" \
+            --restart unless-stopped \
             --volume /sys/fs/cgroup:/sys/fs/cgroup:ro \
             --net UPRI-docker-network \
             --env REACT_APP_BACKEND_PORT=5001 \
@@ -529,12 +543,14 @@ function start_container() {
     if [[ $(docker inspect --format='{{.State.Running}}' "$CONTAINER" 2>/dev/null) == "true" ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Container $CONTAINER is already running."
+        ensure_container_restart_policy "$CONTAINER" >/dev/null 2>&1 || true
         return 0
     else
         docker start "$CONTAINER"
         if [[ $? -eq 0 ]]; then
             echo -en "[  \e[32mOK\e[0m  ] "
             echo "Container $CONTAINER started successfully."
+            ensure_container_restart_policy "$CONTAINER" >/dev/null 2>&1 || true
             return 0
         else
             echo -en "[\e[1;31mFAILED\e[0m] "
