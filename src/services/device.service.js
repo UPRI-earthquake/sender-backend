@@ -390,30 +390,87 @@ async function refreshAuthToken() {
 }
 
 async function refreshIfExpiringSoon() {
+  const refreshResult = await refreshIfExpiringSoonWithStatus();
+  if (refreshResult.attempted && !refreshResult.success) {
+    const err = new Error(refreshResult.errorMessage || 'Proactive token refresh failed');
+    if (refreshResult.errorCode) {
+      err.code = refreshResult.errorCode;
+    }
+    if (refreshResult.errorStatus) {
+      err.status = refreshResult.errorStatus;
+    }
+    throw err;
+  }
+  return refreshResult.accessToken || null;
+}
+
+async function refreshIfExpiringSoonWithStatus() {
   const tokenData = await readJsonFile(tokenPath(), createDefaultTokenInfo());
   const [status, refreshStatus] = await Promise.all([
     getAccessTokenStatus(),
     getRefreshTokenStatus(),
   ]);
 
-  if (['missing', 'invalid', 'expired', 'corrupted'].includes(refreshStatus.state)) {
-    return null;
-  }
-
   // If token missing/invalid/expired, try refresh immediately
-  if (['missing', 'invalid', 'corrupted', 'expired'].includes(status.state)) {
-    return refreshAuthToken();
-  }
-
   // If token exists but expiring soon per configured leeway, refresh
-  if (status.state === 'valid' && typeof status.secondsToExpiry === 'number') {
-    const msToExpiry = status.secondsToExpiry * 1000;
-    if (msToExpiry <= refreshLeewayMs) {
-      return refreshAuthToken();
-    }
+  const shouldRefresh =
+    ['missing', 'invalid', 'corrupted', 'expired'].includes(status.state)
+    || (
+      status.state === 'valid'
+      && typeof status.secondsToExpiry === 'number'
+      && status.secondsToExpiry * 1000 <= refreshLeewayMs
+    );
+
+  if (!shouldRefresh) {
+    return {
+      attempted: false,
+      success: true,
+      reason: 'notDue',
+      accessToken: tokenData?.accessToken || null,
+      tokenStatusBefore: status,
+      refreshTokenStatus: refreshStatus,
+    };
   }
 
-  return tokenData?.accessToken || null;
+  if (['missing', 'invalid', 'expired', 'corrupted'].includes(refreshStatus.state)) {
+    return {
+      attempted: true,
+      success: false,
+      reason: 'refreshTokenUnavailable',
+      accessToken: tokenData?.accessToken || null,
+      tokenStatusBefore: status,
+      refreshTokenStatus: refreshStatus,
+      errorMessage: refreshStatus?.reason || 'Refresh token unavailable',
+      errorCode: 'REFRESH_TOKEN_UNAVAILABLE',
+      errorStatus: null,
+    };
+  }
+
+  try {
+    const refreshedAccessToken = await refreshAuthToken();
+    const tokenStatusAfter = await getAccessTokenStatus();
+    return {
+      attempted: true,
+      success: true,
+      reason: 'refreshed',
+      accessToken: refreshedAccessToken,
+      tokenStatusBefore: status,
+      tokenStatusAfter,
+      refreshTokenStatus: refreshStatus,
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      success: false,
+      reason: 'refreshFailed',
+      accessToken: tokenData?.accessToken || null,
+      tokenStatusBefore: status,
+      refreshTokenStatus: refreshStatus,
+      errorMessage: error?.message || String(error),
+      errorCode: error?.code || null,
+      errorStatus: error?.status || error?.response?.status || error?.meta?.status || null,
+    };
+  }
 }
 
 async function clearLocalLinkState() {
@@ -665,6 +722,7 @@ module.exports = {
   checkAuthToken,
   ensureValidAccessToken,
   refreshIfExpiringSoon,
+  refreshIfExpiringSoonWithStatus,
   clearLocalLinkState,
   persistDeviceInfo,
   persistToken,

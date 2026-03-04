@@ -1,9 +1,12 @@
+const fs = require('fs');
+const path = require('path');
 // import app from './app'
 const app = require('./app')
 const { createLocalFileStoreDir } = require('./services/utils')
 const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stream.utils')
 let { streamsObject } = require('./controllers/stream.utils')
-const { refreshIfExpiringSoon } = require('./services/device.service')
+const { refreshIfExpiringSoonWithStatus } = require('./services/device.service')
+const rshakeAlertsService = require('./services/rshakeAlerts.service')
 
 // Asynchronous function for:
 // 1. creating local file store,
@@ -33,6 +36,166 @@ async function init() {
 init();
 
 const isTestRuntime = process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID !== undefined;
+const localDbsRoot = process.env.LOCALDBS_DIRECTORY || './localDBs';
+const tokenRefreshFailureThreshold = Number(process.env.TOKEN_REFRESH_FAILED_CONSECUTIVE_THRESHOLD || 2);
+const tokenRefreshSuccessCooldownSec = Number(process.env.TOKEN_REFRESH_SUCCESS_COOLDOWN_SEC || 86400);
+const tokenRefreshAlertsEnabled = String(process.env.TOKEN_REFRESH_ALERTS_ENABLED || 'true').toLowerCase() !== 'false';
+const tokenRefreshAlertStatePath = process.env.TOKEN_REFRESH_ALERT_STATE_FILE
+  || path.join(localDbsRoot, 'token-refresh-alert-state.json');
+
+let tokenAlertState = {
+  failureCount: 0,
+  failureActive: false,
+  lastSuccessAlertAt: 0,
+};
+let tokenAlertStateLoaded = false;
+
+function safeInteger(value, fallback, min = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const rounded = Math.floor(numeric);
+  if (rounded < min) return fallback;
+  return rounded;
+}
+
+function normalizeTokenAlertState(raw = {}) {
+  return {
+    failureCount: safeInteger(raw.failureCount, 0, 0),
+    failureActive: raw.failureActive === true,
+    lastSuccessAlertAt: safeInteger(raw.lastSuccessAlertAt, 0, 0),
+  };
+}
+
+async function loadTokenAlertState() {
+  if (tokenAlertStateLoaded) return;
+  tokenAlertStateLoaded = true;
+  try {
+    const raw = await fs.promises.readFile(tokenRefreshAlertStatePath, 'utf-8');
+    tokenAlertState = normalizeTokenAlertState(JSON.parse(raw));
+  } catch (_error) {
+    tokenAlertState = normalizeTokenAlertState();
+  }
+}
+
+async function saveTokenAlertState() {
+  try {
+    await fs.promises.mkdir(path.dirname(tokenRefreshAlertStatePath), { recursive: true });
+    await fs.promises.writeFile(
+      tokenRefreshAlertStatePath,
+      JSON.stringify(tokenAlertState),
+    );
+  } catch (error) {
+    console.log(`Failed to persist token refresh alert state: ${error.message || error}`);
+  }
+}
+
+async function postTokenRefreshAlert({
+  type = 'device.alert',
+  alertCode,
+  severity,
+  status,
+  summary,
+  details = {},
+}) {
+  if (!tokenRefreshAlertsEnabled) {
+    return { str: 'disabled' };
+  }
+
+  return rshakeAlertsService.postRshakeAlert({
+    type,
+    alertCode,
+    severity,
+    status,
+    summary,
+    details: {
+      source: 'sender-token-auto-refresh',
+      notificationScope: 'admin-only',
+      ...details,
+    },
+    dedupeKey: `token-refresh.${String(alertCode || 'alert').toLowerCase()}`,
+  });
+}
+
+async function handleTokenRefreshAlerts(refreshResult) {
+  if (!refreshResult || !refreshResult.attempted) {
+    return;
+  }
+
+  await loadTokenAlertState();
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const threshold = safeInteger(tokenRefreshFailureThreshold, 2, 1);
+  const successCooldownSec = safeInteger(tokenRefreshSuccessCooldownSec, 86400, 0);
+  const tokenStatusBefore = refreshResult.tokenStatusBefore || {};
+  const tokenStatusAfter = refreshResult.tokenStatusAfter || {};
+
+  if (!refreshResult.success) {
+    tokenAlertState.failureCount += 1;
+    if (!tokenAlertState.failureActive && tokenAlertState.failureCount >= threshold) {
+      await postTokenRefreshAlert({
+        type: 'device.alert',
+        alertCode: 'TOKEN_REFRESH_FAILED',
+        severity: 'warning',
+        status: 'Error',
+        summary: 'Sender auto-refresh token attempts are failing.',
+        details: {
+          attemptCount: tokenAlertState.failureCount,
+          failureThreshold: threshold,
+          reason: refreshResult.errorMessage || 'Unknown token refresh error',
+          errorCode: refreshResult.errorCode || null,
+          errorStatus: refreshResult.errorStatus || null,
+          expiresAtBefore: tokenStatusBefore.expiresAt || null,
+          secondsToExpiryBefore: tokenStatusBefore.secondsToExpiry ?? null,
+        },
+      });
+      tokenAlertState.failureActive = true;
+    }
+
+    await saveTokenAlertState();
+    return;
+  }
+
+  const shouldPostRecovery = tokenAlertState.failureActive;
+  tokenAlertState.failureCount = 0;
+  tokenAlertState.failureActive = false;
+
+  if (shouldPostRecovery) {
+    await postTokenRefreshAlert({
+      type: 'device.recovery',
+      alertCode: 'TOKEN_REFRESH_RECOVERY',
+      severity: 'info',
+      status: 'Recovered',
+      summary: 'Sender auto-refresh token attempts recovered.',
+      details: {
+        expiresAtBefore: tokenStatusBefore.expiresAt || null,
+        expiresAtAfter: tokenStatusAfter.expiresAt || null,
+        secondsToExpiryAfter: tokenStatusAfter.secondsToExpiry ?? null,
+      },
+    });
+  }
+
+  const elapsedSinceSuccessAlert = nowSeconds - tokenAlertState.lastSuccessAlertAt;
+  const shouldPostSuccess = !shouldPostRecovery
+    && (tokenAlertState.lastSuccessAlertAt === 0 || elapsedSinceSuccessAlert >= successCooldownSec);
+
+  if (shouldPostSuccess) {
+    await postTokenRefreshAlert({
+      type: 'device.alert',
+      alertCode: 'TOKEN_REFRESH_SUCCESS',
+      severity: 'info',
+      status: 'AutoRefresh',
+      summary: 'Sender access token auto-refresh succeeded.',
+      details: {
+        expiresAtBefore: tokenStatusBefore.expiresAt || null,
+        expiresAtAfter: tokenStatusAfter.expiresAt || null,
+        secondsToExpiryAfter: tokenStatusAfter.secondsToExpiry ?? null,
+      },
+    });
+    tokenAlertState.lastSuccessAlertAt = nowSeconds;
+  }
+
+  await saveTokenAlertState();
+}
 
 // Proactive token refresh scheduler (runs with the server process)
 let refreshTimer = null;
@@ -45,9 +208,13 @@ const clearRefreshTimer = () => {
 
 const scheduleRefresh = async () => {
   try {
-    await refreshIfExpiringSoon();
+    const refreshResult = await refreshIfExpiringSoonWithStatus();
+    await handleTokenRefreshAlerts(refreshResult);
+    if (refreshResult?.attempted && !refreshResult.success) {
+      console.log(`Proactive token refresh failed: ${refreshResult.errorMessage || 'Unknown refresh error'}`);
+    }
   } catch (error) {
-    console.log(`Proactive token refresh failed: ${error.message || error}`);
+    console.log(`Proactive token refresh scheduler error: ${error.message || error}`);
   } finally {
     const interval = Number(process.env.REFRESH_CHECK_INTERVAL_MS || 15 * 60 * 1000);
     refreshTimer = setTimeout(scheduleRefresh, interval);

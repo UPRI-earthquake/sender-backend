@@ -40,10 +40,20 @@ DNS_CHECK_HOSTS_DEFAULT="earthquake.science.upd.edu.ph github.com"
 DNS_FLAGS=()
 AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert"
 AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
+DISK_ALERT_WARN_FREE_PCT_DEFAULT=15
+DISK_ALERT_CRITICAL_FREE_PCT_DEFAULT=8
+DISK_ALERT_RECOVERY_FREE_PCT_DEFAULT=20
+DISK_ALERT_PATHS_DEFAULT="/,/app/localDBs"
+DISK_ALERT_STATE_FILE_DEFAULT="/var/lib/upri-sender/disk-alert-state.env"
 LAST_PULL_RESULT="unknown"
 AUTO_UPDATE_STATE_FILE_DEFAULT="/var/lib/upri-sender/update-state.json"
 AUTO_UPDATE_STATE_FILE="${AUTO_UPDATE_STATE_FILE:-$AUTO_UPDATE_STATE_FILE_DEFAULT}"
 LEGACY_AUTO_UPDATE_STATE_FILE="/tmp/upri-sender-auto-update-state.env"
+DISK_ALERT_WARN_FREE_PCT="${DISK_ALERT_WARN_FREE_PCT:-$DISK_ALERT_WARN_FREE_PCT_DEFAULT}"
+DISK_ALERT_CRITICAL_FREE_PCT="${DISK_ALERT_CRITICAL_FREE_PCT:-$DISK_ALERT_CRITICAL_FREE_PCT_DEFAULT}"
+DISK_ALERT_RECOVERY_FREE_PCT="${DISK_ALERT_RECOVERY_FREE_PCT:-$DISK_ALERT_RECOVERY_FREE_PCT_DEFAULT}"
+DISK_ALERT_PATHS="${DISK_ALERT_PATHS:-$DISK_ALERT_PATHS_DEFAULT}"
+DISK_ALERT_STATE_FILE="${DISK_ALERT_STATE_FILE:-$DISK_ALERT_STATE_FILE_DEFAULT}"
 
 SENDER_SCRIPT_AUTO_UPDATE_ENABLED_DEFAULT="deprecated"
 SENDER_BACKEND_SCRIPT_URL_DEFAULT="deprecated"
@@ -60,6 +70,11 @@ LAST_FRONTEND_DIGEST="unknown"
 LAST_BUNDLE_VERSION="unknown"
 LAST_FRONTEND_BUNDLE_VERSION="unknown"
 LAST_STATE_FILE_PATH="$AUTO_UPDATE_STATE_FILE"
+DISK_ALERT_LAST_LEVEL="ok"
+DISK_ALERT_LAST_PATH=""
+DISK_ALERT_LAST_FREE_PCT=100
+DISK_ALERT_LAST_CHECK_AT=""
+DISK_ALERT_STATE_FILE_PATH="$DISK_ALERT_STATE_FILE"
 
 function json_escape() {
     local value="$1"
@@ -224,6 +239,382 @@ function resolve_state_file_path() {
     fi
 
     printf "/tmp/upri-sender/update-state.json"
+}
+
+function normalize_percent_value() {
+    local raw="$1"
+    local fallback="$2"
+    if [[ "$raw" =~ ^[0-9]+$ ]] && (( raw >= 0 && raw <= 100 )); then
+        printf "%s" "$raw"
+        return 0
+    fi
+    printf "%s" "$fallback"
+}
+
+function resolve_disk_alert_state_file_path() {
+    local state_file="$DISK_ALERT_STATE_FILE"
+    local state_dir
+
+    state_dir="$(dirname "$state_file")"
+    if mkdir -p "$state_dir" >/dev/null 2>&1; then
+        printf "%s" "$state_file"
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$state_dir" >/dev/null 2>&1; then
+        printf "%s" "$state_file"
+        return 0
+    fi
+
+    printf "/tmp/upri-sender/disk-alert-state.env"
+}
+
+function load_disk_alert_state() {
+    local state_path
+    local key
+    local value
+
+    DISK_ALERT_LAST_LEVEL="ok"
+    DISK_ALERT_LAST_PATH=""
+    DISK_ALERT_LAST_FREE_PCT=100
+    DISK_ALERT_LAST_CHECK_AT=""
+
+    state_path="$(resolve_disk_alert_state_file_path)"
+    DISK_ALERT_STATE_FILE_PATH="$state_path"
+
+    if [[ ! -r "$state_path" ]]; then
+        return 0
+    fi
+
+    while IFS='=' read -r key value; do
+        case "$key" in
+            DISK_ALERT_LEVEL)
+                case "$value" in
+                    ok|warn|critical)
+                        DISK_ALERT_LAST_LEVEL="$value"
+                        ;;
+                esac
+                ;;
+            DISK_ALERT_PATH)
+                DISK_ALERT_LAST_PATH="$value"
+                ;;
+            DISK_ALERT_FREE_PCT)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then
+                    DISK_ALERT_LAST_FREE_PCT="$value"
+                fi
+                ;;
+            DISK_ALERT_LAST_CHECK_AT)
+                DISK_ALERT_LAST_CHECK_AT="$value"
+                ;;
+        esac
+    done < "$state_path"
+}
+
+function write_disk_alert_state() {
+    local level="$1"
+    local path_value="$2"
+    local free_pct="$3"
+    local checked_at="$4"
+    local state_path tmp_file
+
+    state_path="$(resolve_disk_alert_state_file_path)"
+    DISK_ALERT_STATE_FILE_PATH="$state_path"
+
+    tmp_file="$(mktemp "/tmp/upri-sender-disk-state.XXXXXX.env")" || return 1
+    cat <<EOF > "$tmp_file"
+DISK_ALERT_LEVEL=$level
+DISK_ALERT_PATH=$path_value
+DISK_ALERT_FREE_PCT=$free_pct
+DISK_ALERT_LAST_CHECK_AT=$checked_at
+EOF
+
+    if ! install_data_payload "$tmp_file" "$state_path" 0644; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Failed to write disk alert state to $state_path."
+        return 1
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    return 0
+}
+
+function classify_disk_alert_level() {
+    local free_pct="$1"
+    local warn_pct="$2"
+    local critical_pct="$3"
+
+    if (( free_pct <= critical_pct )); then
+        printf "critical"
+        return 0
+    fi
+    if (( free_pct <= warn_pct )); then
+        printf "warn"
+        return 0
+    fi
+    printf "ok"
+}
+
+function collect_worst_disk_usage() {
+    local configured_paths="$DISK_ALERT_PATHS"
+    local path df_line
+    local used_pct avail_kb total_kb mount_point free_pct
+    local found=0
+    local worst_free=101
+    local summary=""
+
+    DISK_ALERT_CURRENT_PATH=""
+    DISK_ALERT_CURRENT_MOUNT=""
+    DISK_ALERT_CURRENT_FREE_PCT=100
+    DISK_ALERT_CURRENT_AVAIL_KB=0
+    DISK_ALERT_CURRENT_TOTAL_KB=0
+    DISK_ALERT_CURRENT_USED_PCT=0
+    DISK_ALERT_CURRENT_SUMMARY=""
+
+    configured_paths="${configured_paths//,/ }"
+    if [[ -z "${configured_paths//[[:space:]]/}" ]]; then
+        configured_paths="/"
+    fi
+
+    for path in $configured_paths; do
+        df_line="$(df -Pk -- "$path" 2>/dev/null | awk 'NR==2 {gsub(/%/, "", $5); print $5 "|" $4 "|" $2 "|" $6}')"
+        if [[ -z "$df_line" ]]; then
+            continue
+        fi
+
+        IFS='|' read -r used_pct avail_kb total_kb mount_point <<< "$df_line"
+        if [[ ! "$used_pct" =~ ^[0-9]+$ ]] || [[ ! "$avail_kb" =~ ^[0-9]+$ ]] || [[ ! "$total_kb" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+
+        free_pct=$((100 - used_pct))
+        if [[ -n "$summary" ]]; then
+            summary="${summary}; "
+        fi
+        summary="${summary}${path}:${free_pct}%"
+
+        if (( free_pct < worst_free )); then
+            found=1
+            worst_free="$free_pct"
+            DISK_ALERT_CURRENT_PATH="$path"
+            DISK_ALERT_CURRENT_MOUNT="$mount_point"
+            DISK_ALERT_CURRENT_FREE_PCT="$free_pct"
+            DISK_ALERT_CURRENT_AVAIL_KB="$avail_kb"
+            DISK_ALERT_CURRENT_TOTAL_KB="$total_kb"
+            DISK_ALERT_CURRENT_USED_PCT="$used_pct"
+        fi
+    done
+
+    DISK_ALERT_CURRENT_SUMMARY="$summary"
+    if (( found == 0 )); then
+        return 1
+    fi
+    return 0
+}
+
+function post_disk_space_alert() {
+    local alert_code="$1"
+    local severity="$2"
+    local summary="$3"
+    local previous_level="$4"
+    local current_level="$5"
+    local free_pct="$6"
+    local monitored_path="$7"
+    local mount_point="$8"
+    local avail_kb="$9"
+    local total_kb="${10}"
+    local check_summary="${11}"
+    local warn_pct="${12}"
+    local critical_pct="${13}"
+    local recovery_pct="${14}"
+    local message_type="${15}"
+    local status_value="${16}"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "curl is unavailable; skipping disk-space alert post."
+        return 0
+    fi
+
+    local network station mac stream_id message_id occurred_at endpoint timeout_sec dedupe_key schema_version mount_token
+    local device_json first_field payload
+    network="$(read_device_value /opt/settings/sys/NET.txt)"
+    station="$(read_device_value /opt/settings/sys/STN.txt)"
+    mac="$(read_device_value /opt/settings/sys/eth-mac.txt)"
+    stream_id="${network}_${station}_.*/MSEED"
+
+    if [[ -z "${network}${station}${mac}" ]]; then
+        local host_fallback
+        host_fallback="$(hostname 2>/dev/null || true)"
+        if [[ -z "$host_fallback" ]]; then
+            host_fallback="sender-backend"
+        fi
+        stream_id="DISK_${host_fallback}"
+    fi
+
+    occurred_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        message_id="$(cat /proc/sys/kernel/random/uuid)"
+    else
+        message_id="$(date +%s%N)-$RANDOM"
+    fi
+
+    endpoint="${AUTO_UPDATE_ALERT_ENDPOINT:-$AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT}"
+    timeout_sec="${AUTO_UPDATE_ALERT_TIMEOUT_SEC:-$AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT}"
+    schema_version="${RSHAKE_ALERT_SCHEMA_VERSION:-1.0}"
+    mount_token="$mount_point"
+    if [[ -z "$mount_token" || "$mount_token" == "/" ]]; then
+        mount_token="root"
+    fi
+    dedupe_key="disk-space.$(sanitize_token "${station:-$stream_id}").$(sanitize_token "$alert_code").$(sanitize_token "$mount_token")"
+
+    device_json="{"
+    first_field=1
+    if [[ -n "$network" ]]; then
+        device_json="${device_json}\"network\":\"$(json_escape "$network")\""
+        first_field=0
+    fi
+    if [[ -n "$station" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"station\":\"$(json_escape "$station")\""
+        first_field=0
+    fi
+    if [[ -n "$stream_id" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"streamId\":\"$(json_escape "$stream_id")\""
+        first_field=0
+    fi
+    if [[ -n "$mac" ]]; then
+        if [[ $first_field -eq 0 ]]; then
+            device_json="${device_json},"
+        fi
+        device_json="${device_json}\"macAddress\":\"$(json_escape "$mac")\""
+        first_field=0
+    fi
+    if [[ $first_field -eq 1 ]]; then
+        device_json="${device_json}\"streamId\":\"DISK_ALERT_SENDER\""
+    fi
+    device_json="${device_json}}"
+
+    payload=$(cat <<EOF
+{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"$(json_escape "$message_type")","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"$(json_escape "$status_value")","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-disk-monitor","notificationScope":"admin-only","monitoredPath":"$(json_escape "$monitored_path")","mountPoint":"$(json_escape "$mount_point")","freePercent":$free_pct,"availableKb":$avail_kb,"totalKb":$total_kb,"previousLevel":"$(json_escape "$previous_level")","currentLevel":"$(json_escape "$current_level")","warnFreePercent":$warn_pct,"criticalFreePercent":$critical_pct,"recoveryFreePercent":$recovery_pct,"diskSummary":"$(json_escape "$check_summary")","checkMode":"auto-update-timer"},"dedupeKey":"$(json_escape "$dedupe_key")"}
+EOF
+)
+
+    local -a secret_header_args=()
+    if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
+        secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
+    fi
+
+    if curl --silent --show-error --max-time "$timeout_sec" \
+        -H "Content-Type: application/json" \
+        "${secret_header_args[@]}" \
+        -X POST "$endpoint" \
+        -d "$payload" >/dev/null; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Disk-space alert ($alert_code) posted to central endpoint."
+        return 0
+    fi
+
+    echo -en "[\e[1;33mWARN\e[0m] "
+    echo "Failed to post disk-space alert ($alert_code) to central endpoint."
+    return 0
+}
+
+function evaluate_and_post_disk_space_alert() {
+    local warn_pct critical_pct recovery_pct
+    local previous_level current_level next_level
+    local alert_code="" severity="" summary="" message_type="device.alert" status_value="Warning"
+    local checked_at
+
+    warn_pct="$(normalize_percent_value "$DISK_ALERT_WARN_FREE_PCT" "$DISK_ALERT_WARN_FREE_PCT_DEFAULT")"
+    critical_pct="$(normalize_percent_value "$DISK_ALERT_CRITICAL_FREE_PCT" "$DISK_ALERT_CRITICAL_FREE_PCT_DEFAULT")"
+    recovery_pct="$(normalize_percent_value "$DISK_ALERT_RECOVERY_FREE_PCT" "$DISK_ALERT_RECOVERY_FREE_PCT_DEFAULT")"
+
+    if (( critical_pct > warn_pct )); then
+        critical_pct="$warn_pct"
+    fi
+    if (( recovery_pct <= warn_pct )); then
+        recovery_pct=$((warn_pct + 5))
+        if (( recovery_pct > 100 )); then
+            recovery_pct=100
+        fi
+    fi
+
+    load_disk_alert_state
+    if ! collect_worst_disk_usage; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Disk monitor skipped: unable to read usage for paths '$DISK_ALERT_PATHS'."
+        return 0
+    fi
+
+    previous_level="$DISK_ALERT_LAST_LEVEL"
+    current_level="$(classify_disk_alert_level "$DISK_ALERT_CURRENT_FREE_PCT" "$warn_pct" "$critical_pct")"
+    next_level="$previous_level"
+
+    if [[ "$previous_level" == "ok" ]]; then
+        if [[ "$current_level" == "critical" ]]; then
+            alert_code="DISK_SPACE_CRITICAL"
+            severity="critical"
+            summary="Sender disk space is critically low."
+            next_level="critical"
+            status_value="Critical"
+        elif [[ "$current_level" == "warn" ]]; then
+            alert_code="DISK_SPACE_WARN"
+            severity="warning"
+            summary="Sender disk space is running low."
+            next_level="warn"
+            status_value="Warning"
+        else
+            next_level="ok"
+        fi
+    else
+        if (( DISK_ALERT_CURRENT_FREE_PCT >= recovery_pct )); then
+            alert_code="DISK_SPACE_RECOVERY"
+            severity="info"
+            summary="Sender disk space recovered above threshold."
+            next_level="ok"
+            message_type="device.recovery"
+            status_value="Recovered"
+        elif [[ "$previous_level" == "warn" && "$current_level" == "critical" ]]; then
+            alert_code="DISK_SPACE_CRITICAL"
+            severity="critical"
+            summary="Sender disk space dropped to critical threshold."
+            next_level="critical"
+            status_value="Critical"
+        else
+            next_level="$previous_level"
+        fi
+    fi
+
+    checked_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    write_disk_alert_state "$next_level" "$DISK_ALERT_CURRENT_PATH" "$DISK_ALERT_CURRENT_FREE_PCT" "$checked_at" || true
+
+    if [[ -z "$alert_code" ]]; then
+        return 0
+    fi
+
+    post_disk_space_alert \
+        "$alert_code" \
+        "$severity" \
+        "$summary" \
+        "$previous_level" \
+        "$next_level" \
+        "$DISK_ALERT_CURRENT_FREE_PCT" \
+        "$DISK_ALERT_CURRENT_PATH" \
+        "$DISK_ALERT_CURRENT_MOUNT" \
+        "$DISK_ALERT_CURRENT_AVAIL_KB" \
+        "$DISK_ALERT_CURRENT_TOTAL_KB" \
+        "$DISK_ALERT_CURRENT_SUMMARY" \
+        "$warn_pct" \
+        "$critical_pct" \
+        "$recovery_pct" \
+        "$message_type" \
+        "$status_value"
+    return 0
 }
 
 function warn_deprecated_script_update_envs() {
@@ -514,6 +905,8 @@ function update_stack_with_alert() {
             "$LAST_FRONTEND_BUNDLE_VERSION" \
             "$LAST_SCRIPT_SYNC_RESULT"
 
+        evaluate_and_post_disk_space_alert || true
+
         write_update_state_files \
             "$backend_result" \
             "$frontend_result" \
@@ -613,6 +1006,8 @@ function update_stack_with_alert() {
         "$LAST_BUNDLE_VERSION" \
         "$LAST_FRONTEND_BUNDLE_VERSION" \
         "$LAST_SCRIPT_SYNC_RESULT"
+
+    evaluate_and_post_disk_space_alert || true
 
     write_update_state_files \
         "$backend_result" \

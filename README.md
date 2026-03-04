@@ -76,6 +76,17 @@ Host update scripts resolve tags to digests before deployment:
 
 State snapshots are written to `/var/lib/upri-sender/update-state.json` (fallback to `/tmp/upri-sender/update-state.json` if permissions prevent writing to `/var/lib`).
 
+### Sender Infrastructure Alerts
+Sender posts admin-only RShake alerts for:
+- Disk monitor (runs with daily `UPDATE_STACK` timer): `DISK_SPACE_WARN`, `DISK_SPACE_CRITICAL`, `DISK_SPACE_RECOVERY`
+- Proactive token refresh scheduler: `TOKEN_REFRESH_FAILED`, `TOKEN_REFRESH_RECOVERY`, `TOKEN_REFRESH_SUCCESS`
+
+Useful env controls:
+- `DISK_ALERT_PATHS`, `DISK_ALERT_WARN_FREE_PCT`, `DISK_ALERT_CRITICAL_FREE_PCT`, `DISK_ALERT_RECOVERY_FREE_PCT`
+- `TOKEN_REFRESH_FAILED_CONSECUTIVE_THRESHOLD`, `TOKEN_REFRESH_SUCCESS_COOLDOWN_SEC`
+
+All of the above include `details.notificationScope=admin-only` and are posted to `W1_RS_ALERT_PATH` (default `/messaging/restricted/rshake-alert`).
+
 ### RShake settings fixtures for dev
 - `dev/settings` mirrors the `/opt/settings` layout of an RShake (including `sys` files plus `config/config.json` and `config/MD-info.json` from the screenshots). The compose file mounts this tree to `/opt/settings`, matching the default `RSHAKE_SETTINGS_PATH`.
 - Update those fixtures if you need to test different coordinates or station IDs; the backend will read from `config.json`/`MD-info.json` first and fall back to `sys` text files and `station.xml`.
