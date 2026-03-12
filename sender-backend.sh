@@ -14,6 +14,8 @@ WATCHDOG_SERVICE="sender-stack-watchdog.service"
 WATCHDOG_TIMER="sender-stack-watchdog.timer"
 WATCHDOG_SERVICE_FILE="/lib/systemd/system/$WATCHDOG_SERVICE"
 WATCHDOG_TIMER_FILE="/lib/systemd/system/$WATCHDOG_TIMER"
+REMOTE_TUNNEL_SERVICE="sender-remote-tunnel.service"
+REMOTE_TUNNEL_SERVICE_FILE="/lib/systemd/system/$REMOTE_TUNNEL_SERVICE"
 
 SENDER_BUNDLE_TAG_DEFAULT="latest"
 SENDER_BACKEND_IMAGE_REPO_DEFAULT="ghcr.io/upri-earthquake/sender-backend"
@@ -58,6 +60,17 @@ WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC_DEFAULT=900
 WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT=300
 WATCHDOG_STATE_FILE_DEFAULT="/var/lib/upri-sender/watchdog-state.env"
 WATCHDOG_LOCK_FILE_DEFAULT="/tmp/upri-sender-maintenance.lock"
+REMOTE_TUNNEL_ENV_FILE_DEFAULT="/etc/upri/sender-remote-tunnel.env"
+REMOTE_TUNNEL_STATE_FILE_DEFAULT="/var/lib/upri-sender/remote-tunnel-state.json"
+REMOTE_TUNNEL_PID_FILE_DEFAULT="/tmp/upri-sender-remote-tunnel.pid"
+REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT=30
+REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT=3
+REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT=15
+REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_DEFAULT="false"
+REMOTE_TUNNEL_ENROLL_ENDPOINT_DEFAULT=""
+REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT=""
+REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT=15
+AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT="true"
 LAST_PULL_RESULT="unknown"
 AUTO_UPDATE_STATE_FILE_DEFAULT="/var/lib/upri-sender/update-state.json"
 AUTO_UPDATE_STATE_FILE="${AUTO_UPDATE_STATE_FILE:-$AUTO_UPDATE_STATE_FILE_DEFAULT}"
@@ -76,6 +89,10 @@ WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC="${WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC:-$WAT
 WATCHDOG_RESTART_COOLDOWN_SEC="${WATCHDOG_RESTART_COOLDOWN_SEC:-$WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT}"
 WATCHDOG_STATE_FILE="${WATCHDOG_STATE_FILE:-$WATCHDOG_STATE_FILE_DEFAULT}"
 WATCHDOG_LOCK_FILE="${WATCHDOG_LOCK_FILE:-$WATCHDOG_LOCK_FILE_DEFAULT}"
+REMOTE_TUNNEL_ENV_FILE="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
+REMOTE_TUNNEL_STATE_FILE="${REMOTE_TUNNEL_STATE_FILE:-$REMOTE_TUNNEL_STATE_FILE_DEFAULT}"
+REMOTE_TUNNEL_PID_FILE="${REMOTE_TUNNEL_PID_FILE:-$REMOTE_TUNNEL_PID_FILE_DEFAULT}"
+AUTO_UPDATE_ROLLBACK_ENABLED="${AUTO_UPDATE_ROLLBACK_ENABLED:-$AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT}"
 
 SENDER_SCRIPT_AUTO_UPDATE_ENABLED_DEFAULT="deprecated"
 SENDER_BACKEND_SCRIPT_URL_DEFAULT="deprecated"
@@ -98,12 +115,36 @@ DISK_ALERT_LAST_FREE_PCT=100
 DISK_ALERT_LAST_CHECK_AT=""
 DISK_ALERT_STATE_FILE_PATH="$DISK_ALERT_STATE_FILE"
 WATCHDOG_STATE_FILE_PATH="$WATCHDOG_STATE_FILE"
+REMOTE_TUNNEL_STATE_FILE_PATH="$REMOTE_TUNNEL_STATE_FILE"
+REMOTE_TUNNEL_ENABLED_VALUE="false"
+REMOTE_TUNNEL_DEVICE_ID_VALUE=""
+REMOTE_TUNNEL_BASTION_HOST_VALUE=""
+REMOTE_TUNNEL_BASTION_PORT_VALUE=443
+REMOTE_TUNNEL_BASTION_USER_VALUE=""
+REMOTE_TUNNEL_REMOTE_PORT_VALUE=""
+REMOTE_TUNNEL_LOCAL_HOST_VALUE="127.0.0.1"
+REMOTE_TUNNEL_LOCAL_PORT_VALUE=22
+REMOTE_TUNNEL_KEY_PATH_VALUE="/etc/upri/remote-tunnel/id_ed25519"
+REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE="/etc/upri/remote-tunnel/known_hosts"
+REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE="$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT"
+REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE="$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT"
+REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE="$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT"
+REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE="$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_DEFAULT"
+REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE="$REMOTE_TUNNEL_ENROLL_ENDPOINT_DEFAULT"
+REMOTE_TUNNEL_ENROLL_TOKEN_VALUE="$REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT"
+REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE="$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT"
+REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE=""
 WATCHDOG_BACKEND_STOPPED_SINCE=0
 WATCHDOG_FRONTEND_STOPPED_SINCE=0
 WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
 WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
 WATCHDOG_BACKEND_LAST_RESTART_TS=0
 WATCHDOG_FRONTEND_LAST_RESTART_TS=0
+LAST_ROLLBACK_RESULT="not-run"
+LAST_ROLLBACK_BACKEND_EXIT=0
+LAST_ROLLBACK_FRONTEND_EXIT=0
+LAST_ROLLBACK_BACKEND_TARGET="none"
+LAST_ROLLBACK_FRONTEND_TARGET="none"
 
 function json_escape() {
     local value="$1"
@@ -122,6 +163,15 @@ function sanitize_token() {
     else
         printf "%s" "$value"
     fi
+}
+
+function is_truthy() {
+    local value="${1:-}"
+    value="$(echo "$value" | tr '[:upper:]' '[:lower:]')"
+    case "$value" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 function read_device_value() {
@@ -251,6 +301,675 @@ function install_data_payload() {
         return 0
     fi
     return 1
+}
+
+function resolve_remote_tunnel_state_file_path() {
+    local state_file="$REMOTE_TUNNEL_STATE_FILE"
+    local state_dir
+
+    state_dir="$(dirname "$state_file")"
+    if mkdir -p "$state_dir" >/dev/null 2>&1; then
+        printf "%s" "$state_file"
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$state_dir" >/dev/null 2>&1; then
+        printf "%s" "$state_file"
+        return 0
+    fi
+
+    printf "/tmp/upri-sender/remote-tunnel-state.json"
+}
+
+function write_remote_tunnel_state() {
+    local connected="$1"
+    local last_connected_at="$2"
+    local last_error="$3"
+    local state_path
+    local tmp_file
+    local now_iso
+    local connected_json="false"
+    local last_connected_json="null"
+    local last_error_json="null"
+    local bastion_port_json="null"
+    local remote_port_json="null"
+    local local_port_json="null"
+
+    state_path="$(resolve_remote_tunnel_state_file_path)"
+    REMOTE_TUNNEL_STATE_FILE_PATH="$state_path"
+
+    if is_truthy "$connected"; then
+        connected_json="true"
+    fi
+    if [[ -n "$last_connected_at" ]]; then
+        last_connected_json="\"$(json_escape "$last_connected_at")\""
+    fi
+    if [[ -n "$last_error" ]]; then
+        last_error_json="\"$(json_escape "$last_error")\""
+    fi
+    if [[ "${REMOTE_TUNNEL_BASTION_PORT_VALUE:-}" =~ ^[0-9]+$ ]]; then
+        bastion_port_json="${REMOTE_TUNNEL_BASTION_PORT_VALUE}"
+    fi
+    if [[ "${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}" =~ ^[0-9]+$ ]]; then
+        remote_port_json="${REMOTE_TUNNEL_REMOTE_PORT_VALUE}"
+    fi
+    if [[ "${REMOTE_TUNNEL_LOCAL_PORT_VALUE:-}" =~ ^[0-9]+$ ]]; then
+        local_port_json="${REMOTE_TUNNEL_LOCAL_PORT_VALUE}"
+    fi
+
+    now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    tmp_file="$(mktemp "/tmp/upri-sender-remote-tunnel-state.XXXXXX.json")" || return 1
+    cat <<EOF > "$tmp_file"
+{"updatedAt":"$(json_escape "$now_iso")","connected":$connected_json,"lastConnectedAt":$last_connected_json,"lastError":$last_error_json,"deviceId":"$(json_escape "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}")","bastionHost":"$(json_escape "${REMOTE_TUNNEL_BASTION_HOST_VALUE:-}")","bastionPort":$bastion_port_json,"bastionUser":"$(json_escape "${REMOTE_TUNNEL_BASTION_USER_VALUE:-}")","remotePort":$remote_port_json,"localHost":"$(json_escape "${REMOTE_TUNNEL_LOCAL_HOST_VALUE:-127.0.0.1}")","localPort":$local_port_json}
+EOF
+
+    if ! install_data_payload "$tmp_file" "$state_path" 0644; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Failed to write remote tunnel state to $state_path."
+        return 1
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    return 0
+}
+
+function load_remote_tunnel_env() {
+    local env_file="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
+    local derived_enroll_endpoint
+
+    REMOTE_TUNNEL_ENV_FILE="$env_file"
+    if [[ -r "$env_file" ]]; then
+        # shellcheck disable=SC1090
+        source "$env_file"
+    fi
+
+    REMOTE_TUNNEL_ENABLED_VALUE="${REMOTE_TUNNEL_ENABLED:-false}"
+    REMOTE_TUNNEL_DEVICE_ID_VALUE="${REMOTE_TUNNEL_DEVICE_ID:-}"
+    REMOTE_TUNNEL_BASTION_HOST_VALUE="${REMOTE_TUNNEL_BASTION_HOST:-}"
+    REMOTE_TUNNEL_BASTION_PORT_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_BASTION_PORT:-443}" 443 1)"
+    REMOTE_TUNNEL_BASTION_USER_VALUE="${REMOTE_TUNNEL_BASTION_USER:-}"
+    REMOTE_TUNNEL_REMOTE_PORT_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_REMOTE_PORT:-0}" 0 0)"
+    REMOTE_TUNNEL_LOCAL_HOST_VALUE="${REMOTE_TUNNEL_LOCAL_HOST:-127.0.0.1}"
+    REMOTE_TUNNEL_LOCAL_PORT_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_LOCAL_PORT:-22}" 22 1)"
+    REMOTE_TUNNEL_KEY_PATH_VALUE="${REMOTE_TUNNEL_KEY_PATH:-/etc/upri/remote-tunnel/id_ed25519}"
+    REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE="${REMOTE_TUNNEL_KNOWN_HOSTS_PATH:-/etc/upri/remote-tunnel/known_hosts}"
+    REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL:-$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT}" "$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT" 5)"
+    REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX:-$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT}" "$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT" 1)"
+    REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC:-$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT}" "$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT" 5)"
+    REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE="${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED:-$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_DEFAULT}"
+    REMOTE_TUNNEL_ENROLL_TOKEN_VALUE="${REMOTE_TUNNEL_ENROLL_TOKEN:-$REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT}"
+    REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC:-$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT}" "$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT" 5)"
+    REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE="${REMOTE_TUNNEL_BASTION_HOST_KEY:-}"
+
+    derived_enroll_endpoint=""
+    if [[ -n "${W1_DEV_IP:-}" && -n "${W1_DEV_PORT:-}" ]]; then
+        derived_enroll_endpoint="http://${W1_DEV_IP}:${W1_DEV_PORT}/device/tunnel/enroll"
+    fi
+    if [[ "${NODE_ENV:-}" == "production" && -n "${W1_PROD_IP:-}" ]]; then
+        derived_enroll_endpoint="https://${W1_PROD_IP}/device/tunnel/enroll"
+    elif [[ -z "$derived_enroll_endpoint" && -n "${W1_PROD_IP:-}" ]]; then
+        derived_enroll_endpoint="https://${W1_PROD_IP}/device/tunnel/enroll"
+    fi
+    REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE="${REMOTE_TUNNEL_ENROLL_ENDPOINT:-$derived_enroll_endpoint}"
+
+    REMOTE_TUNNEL_STATE_FILE="${REMOTE_TUNNEL_STATE_FILE:-$REMOTE_TUNNEL_STATE_FILE_DEFAULT}"
+    REMOTE_TUNNEL_PID_FILE="${REMOTE_TUNNEL_PID_FILE:-$REMOTE_TUNNEL_PID_FILE_DEFAULT}"
+    return 0
+}
+
+function remote_tunnel_config_is_complete() {
+    if [[ -z "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}" ]]; then
+        return 1
+    fi
+    if [[ -z "${REMOTE_TUNNEL_BASTION_HOST_VALUE:-}" ]]; then
+        return 1
+    fi
+    if [[ -z "${REMOTE_TUNNEL_BASTION_USER_VALUE:-}" ]]; then
+        return 1
+    fi
+    if ! [[ "${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}" =~ ^[0-9]+$ ]] || (( REMOTE_TUNNEL_REMOTE_PORT_VALUE < 1 || REMOTE_TUNNEL_REMOTE_PORT_VALUE > 65535 )); then
+        return 1
+    fi
+    if [[ ! -s "${REMOTE_TUNNEL_KEY_PATH_VALUE:-}" ]]; then
+        return 1
+    fi
+    if [[ ! -s "${REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE:-}" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+function remote_tunnel_extract_json_string() {
+    local json="$1"
+    local key="$2"
+    local value
+
+    value="$(printf '%s' "$json" | tr -d '\n' | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1)"
+    value="${value//\\\\/\\}"
+    value="${value//\\\"/\"}"
+    value="${value//\\n/}"
+    printf '%s' "$value"
+}
+
+function remote_tunnel_extract_json_number() {
+    local json="$1"
+    local key="$2"
+    printf '%s' "$json" | tr -d '\n' | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" | head -n 1
+}
+
+function remote_tunnel_env_escape() {
+    local value="$1"
+    value="${value//$'\r'/}"
+    value="${value//$'\n'/}"
+    value="${value//\'/\'\\\'\'}"
+    printf "'%s'" "$value"
+}
+
+function remote_tunnel_emit_env_line() {
+    local key="$1"
+    local value="${2-}"
+    printf "%s=%s\n" "$key" "$(remote_tunnel_env_escape "$value")"
+}
+
+function persist_remote_tunnel_env() {
+    local env_file="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
+    local env_dir
+    local tmp_file
+
+    env_dir="$(dirname "$env_file")"
+    if ! mkdir -p "$env_dir" >/dev/null 2>&1; then
+        if ! (command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$env_dir" >/dev/null 2>&1); then
+            remote_tunnel_config_error "Unable to create remote tunnel env directory: $env_dir"
+            return 1
+        fi
+    fi
+
+    tmp_file="$(mktemp "/tmp/upri-sender-remote-tunnel-env.XXXXXX")" || return 1
+    {
+        printf "# Sender reverse SSH tunnel configuration\n"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENABLED" "${REMOTE_TUNNEL_ENABLED_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_DEVICE_ID" "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_HOST" "${REMOTE_TUNNEL_BASTION_HOST_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_PORT" "${REMOTE_TUNNEL_BASTION_PORT_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_USER" "${REMOTE_TUNNEL_BASTION_USER_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_REMOTE_PORT" "${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_LOCAL_HOST" "${REMOTE_TUNNEL_LOCAL_HOST_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_LOCAL_PORT" "${REMOTE_TUNNEL_LOCAL_PORT_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_KEY_PATH" "${REMOTE_TUNNEL_KEY_PATH_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_KNOWN_HOSTS_PATH" "${REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL" "${REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX" "${REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC" "${REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_STATE_FILE" "${REMOTE_TUNNEL_STATE_FILE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_PID_FILE" "${REMOTE_TUNNEL_PID_FILE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_AUTO_REGISTER_ENABLED" "${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENROLL_ENDPOINT" "${REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENROLL_TOKEN" "${REMOTE_TUNNEL_ENROLL_TOKEN_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC" "${REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_HOST_KEY" "${REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE:-}"
+    } > "$tmp_file"
+
+    if ! install_data_payload "$tmp_file" "$env_file" 0600; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        remote_tunnel_config_error "Unable to persist remote tunnel env file: $env_file"
+        return 1
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    return 0
+}
+
+function remote_tunnel_apply_runtime_permissions() {
+    local service_user="${REMOTE_TUNNEL_SERVICE_USER:-myshake}"
+    local service_group
+    local env_file="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
+    local key_dir
+    local known_hosts_dir
+    local dir_path
+
+    if ! id -u "$service_user" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    service_group="$(id -gn "$service_user" 2>/dev/null || echo "$service_user")"
+    key_dir="$(dirname "$REMOTE_TUNNEL_KEY_PATH_VALUE")"
+    known_hosts_dir="$(dirname "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE")"
+
+    for dir_path in "$key_dir" "$known_hosts_dir"; do
+        [[ -n "$dir_path" ]] || continue
+        mkdir -p "$dir_path" >/dev/null 2>&1 || true
+        chown "$service_user:$service_group" "$dir_path" >/dev/null 2>&1 || true
+        chmod 0700 "$dir_path" >/dev/null 2>&1 || true
+    done
+
+    if [[ -f "$env_file" ]]; then
+        chown "$service_user:$service_group" "$env_file" >/dev/null 2>&1 || true
+        chmod 0600 "$env_file" >/dev/null 2>&1 || true
+    fi
+    if [[ -f "$REMOTE_TUNNEL_KEY_PATH_VALUE" ]]; then
+        chown "$service_user:$service_group" "$REMOTE_TUNNEL_KEY_PATH_VALUE" >/dev/null 2>&1 || true
+        chmod 0600 "$REMOTE_TUNNEL_KEY_PATH_VALUE" >/dev/null 2>&1 || true
+    fi
+    if [[ -f "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" ]]; then
+        chown "$service_user:$service_group" "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" >/dev/null 2>&1 || true
+        chmod 0644 "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" >/dev/null 2>&1 || true
+    fi
+    if [[ -f "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" ]]; then
+        chown "$service_user:$service_group" "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" >/dev/null 2>&1 || true
+        chmod 0644 "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+function remote_tunnel_write_known_hosts() {
+    local known_hosts_path="$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE"
+    local known_hosts_dir
+    local tmp_file
+
+    if [[ -n "$REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE" ]]; then
+        known_hosts_dir="$(dirname "$known_hosts_path")"
+        if ! mkdir -p "$known_hosts_dir" >/dev/null 2>&1; then
+            if ! (command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$known_hosts_dir" >/dev/null 2>&1); then
+                remote_tunnel_config_error "Unable to create known_hosts directory: $known_hosts_dir"
+                return 1
+            fi
+        fi
+
+        tmp_file="$(mktemp "/tmp/upri-sender-known-hosts.XXXXXX")" || return 1
+        printf '%s\n' "$REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE" > "$tmp_file"
+        if ! install_data_payload "$tmp_file" "$known_hosts_path" 0644; then
+            rm -f "$tmp_file" >/dev/null 2>&1
+            remote_tunnel_config_error "Unable to write known_hosts file: $known_hosts_path"
+            return 1
+        fi
+        rm -f "$tmp_file" >/dev/null 2>&1
+        return 0
+    fi
+
+    if [[ ! -s "$known_hosts_path" ]]; then
+        remote_tunnel_config_error "Enrollment response did not include bastion host key and known_hosts file is empty: $known_hosts_path"
+        return 1
+    fi
+    return 0
+}
+
+function remote_tunnel_ensure_keypair() {
+    local key_path="$REMOTE_TUNNEL_KEY_PATH_VALUE"
+    local pub_path="${key_path}.pub"
+    local key_dir
+
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        remote_tunnel_config_error "ssh-keygen is required for tunnel auto-registration."
+        return 1
+    fi
+
+    key_dir="$(dirname "$key_path")"
+    if ! mkdir -p "$key_dir" >/dev/null 2>&1; then
+        if ! (command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$key_dir" >/dev/null 2>&1); then
+            remote_tunnel_config_error "Unable to create remote tunnel key directory: $key_dir"
+            return 1
+        fi
+    fi
+
+    if [[ ! -s "$key_path" || ! -s "$pub_path" ]]; then
+        rm -f "$key_path" "$pub_path" >/dev/null 2>&1 || true
+        if ! ssh-keygen -q -t ed25519 -N "" -f "$key_path" >/dev/null 2>&1; then
+            remote_tunnel_config_error "Failed to generate remote tunnel keypair at $key_path"
+            return 1
+        fi
+    fi
+
+    chmod 0600 "$key_path" >/dev/null 2>&1 || true
+    chmod 0644 "$pub_path" >/dev/null 2>&1 || true
+    return 0
+}
+
+function remote_tunnel_derive_device_id() {
+    local network
+    local station
+    local host_name
+
+    if [[ -n "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}" ]]; then
+        return 0
+    fi
+
+    network="$(read_device_value /opt/settings/sys/NET.txt || true)"
+    station="$(read_device_value /opt/settings/sys/STN.txt || true)"
+    if [[ -n "$network" && -n "$station" ]]; then
+        REMOTE_TUNNEL_DEVICE_ID_VALUE="${network}_${station}"
+        return 0
+    fi
+
+    host_name="$(hostname 2>/dev/null || true)"
+    host_name="$(sanitize_token "${host_name:-sender-device}")"
+    REMOTE_TUNNEL_DEVICE_ID_VALUE="$host_name"
+    return 0
+}
+
+function remote_tunnel_attempt_auto_register() {
+    local endpoint="$REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE"
+    local token="$REMOTE_TUNNEL_ENROLL_TOKEN_VALUE"
+    local timeout_sec="$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE"
+    local response_file
+    local response_body
+    local curl_exit=0
+    local http_code
+    local api_message
+    local network
+    local station
+    local public_key
+    local payload
+    local remote_port_value
+    local bastion_port_value
+    local response_host_key
+
+    if ! is_truthy "$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE"; then
+        return 0
+    fi
+    if remote_tunnel_config_is_complete; then
+        return 0
+    fi
+
+    if [[ -z "$endpoint" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_ENROLL_ENDPOINT is required when auto-register is enabled."
+        return 1
+    fi
+    if [[ -z "$token" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_ENROLL_TOKEN is required when auto-register is enabled."
+        return 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        remote_tunnel_config_error "curl is required for tunnel auto-registration."
+        return 1
+    fi
+
+    remote_tunnel_derive_device_id || return 1
+    remote_tunnel_ensure_keypair || return 1
+
+    public_key="$(head -n 1 "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" 2>/dev/null | tr -d '\r')"
+    if [[ -z "$public_key" ]]; then
+        remote_tunnel_config_error "Unable to read tunnel public key from ${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub"
+        return 1
+    fi
+
+    network="$(read_device_value /opt/settings/sys/NET.txt || true)"
+    station="$(read_device_value /opt/settings/sys/STN.txt || true)"
+
+    payload="{\"deviceId\":\"$(json_escape "$REMOTE_TUNNEL_DEVICE_ID_VALUE")\",\"tunnelPublicKey\":\"$(json_escape "$public_key")\""
+    if [[ -n "$network" ]]; then
+        payload="${payload},\"network\":\"$(json_escape "$network")\""
+    fi
+    if [[ -n "$station" ]]; then
+        payload="${payload},\"station\":\"$(json_escape "$station")\""
+    fi
+    payload="${payload}}"
+
+    response_file="$(mktemp "/tmp/upri-sender-remote-tunnel-enroll.XXXXXX.json")" || return 1
+    http_code="$(curl --silent --show-error \
+        --connect-timeout "$timeout_sec" \
+        --max-time "$timeout_sec" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $token" \
+        -X POST "$endpoint" \
+        -d "$payload" \
+        -o "$response_file" \
+        -w "%{http_code}" 2>/dev/null)" || curl_exit=$?
+
+    if [[ $curl_exit -ne 0 ]]; then
+        rm -f "$response_file" >/dev/null 2>&1 || true
+        remote_tunnel_config_error "Auto-registration request failed (curl exit $curl_exit)."
+        return 1
+    fi
+
+    response_body="$(tr -d '\r\n' < "$response_file")"
+    rm -f "$response_file" >/dev/null 2>&1 || true
+
+    if ! [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        api_message="$(remote_tunnel_extract_json_string "$response_body" "message")"
+        if [[ -z "$api_message" ]]; then
+            api_message="HTTP $http_code"
+        fi
+        remote_tunnel_config_error "Auto-registration rejected by enrollment API: $api_message"
+        return 1
+    fi
+
+    REMOTE_TUNNEL_BASTION_HOST_VALUE="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_BASTION_HOST")"
+    REMOTE_TUNNEL_BASTION_USER_VALUE="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_BASTION_USER")"
+    response_host_key="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_BASTION_HOST_KEY")"
+    remote_port_value="$(remote_tunnel_extract_json_number "$response_body" "REMOTE_TUNNEL_REMOTE_PORT")"
+    bastion_port_value="$(remote_tunnel_extract_json_number "$response_body" "REMOTE_TUNNEL_BASTION_PORT")"
+
+    if [[ -z "$REMOTE_TUNNEL_BASTION_HOST_VALUE" || -z "$REMOTE_TUNNEL_BASTION_USER_VALUE" || -z "$remote_port_value" ]]; then
+        remote_tunnel_config_error "Enrollment API response missing required tunnel mapping fields."
+        return 1
+    fi
+
+    REMOTE_TUNNEL_REMOTE_PORT_VALUE="$remote_port_value"
+    if [[ -n "$bastion_port_value" ]]; then
+        REMOTE_TUNNEL_BASTION_PORT_VALUE="$bastion_port_value"
+    fi
+    if [[ -n "$response_host_key" ]]; then
+        REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE="$response_host_key"
+    fi
+    REMOTE_TUNNEL_ENABLED_VALUE="true"
+
+    remote_tunnel_write_known_hosts || return 1
+    persist_remote_tunnel_env || return 1
+
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "Remote tunnel auto-registration succeeded (device=$REMOTE_TUNNEL_DEVICE_ID_VALUE user=$REMOTE_TUNNEL_BASTION_USER_VALUE port=$REMOTE_TUNNEL_REMOTE_PORT_VALUE)."
+    return 0
+}
+
+function remote_tunnel_config_error() {
+    REMOTE_TUNNEL_LAST_ERROR_VALUE="$1"
+    echo -en "[\e[1;31mFAILED\e[0m] "
+    echo "Remote tunnel configuration error: $REMOTE_TUNNEL_LAST_ERROR_VALUE"
+    return 1
+}
+
+function remote_tunnel_validate_config() {
+    local key_mode
+    local key_mode_num
+    local key_group
+    local key_other
+
+    if ! is_truthy "$REMOTE_TUNNEL_ENABLED_VALUE"; then
+        REMOTE_TUNNEL_LAST_ERROR_VALUE="remote tunnel disabled (REMOTE_TUNNEL_ENABLED=false)"
+        return 3
+    fi
+    if [[ -z "$REMOTE_TUNNEL_DEVICE_ID_VALUE" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_DEVICE_ID is required."
+        return 1
+    fi
+    if [[ -z "$REMOTE_TUNNEL_BASTION_HOST_VALUE" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_BASTION_HOST is required."
+        return 1
+    fi
+    if [[ -z "$REMOTE_TUNNEL_BASTION_USER_VALUE" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_BASTION_USER is required."
+        return 1
+    fi
+    if ! [[ "$REMOTE_TUNNEL_BASTION_PORT_VALUE" =~ ^[0-9]+$ ]] || (( REMOTE_TUNNEL_BASTION_PORT_VALUE < 1 || REMOTE_TUNNEL_BASTION_PORT_VALUE > 65535 )); then
+        remote_tunnel_config_error "REMOTE_TUNNEL_BASTION_PORT must be between 1 and 65535."
+        return 1
+    fi
+    if ! [[ "$REMOTE_TUNNEL_REMOTE_PORT_VALUE" =~ ^[0-9]+$ ]] || (( REMOTE_TUNNEL_REMOTE_PORT_VALUE < 1 || REMOTE_TUNNEL_REMOTE_PORT_VALUE > 65535 )); then
+        remote_tunnel_config_error "REMOTE_TUNNEL_REMOTE_PORT must be between 1 and 65535."
+        return 1
+    fi
+    if ! [[ "$REMOTE_TUNNEL_LOCAL_PORT_VALUE" =~ ^[0-9]+$ ]] || (( REMOTE_TUNNEL_LOCAL_PORT_VALUE < 1 || REMOTE_TUNNEL_LOCAL_PORT_VALUE > 65535 )); then
+        remote_tunnel_config_error "REMOTE_TUNNEL_LOCAL_PORT must be between 1 and 65535."
+        return 1
+    fi
+    if [[ ! -s "$REMOTE_TUNNEL_KEY_PATH_VALUE" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_KEY_PATH is missing or empty: $REMOTE_TUNNEL_KEY_PATH_VALUE"
+        return 1
+    fi
+    if [[ ! -s "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_KNOWN_HOSTS_PATH is missing or empty: $REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE"
+        return 1
+    fi
+    if ! command -v autossh >/dev/null 2>&1; then
+        remote_tunnel_config_error "autossh is required but not installed."
+        return 1
+    fi
+    if ! command -v ssh >/dev/null 2>&1; then
+        remote_tunnel_config_error "ssh client is required but not installed."
+        return 1
+    fi
+
+    key_mode="$(stat -c '%a' "$REMOTE_TUNNEL_KEY_PATH_VALUE" 2>/dev/null || true)"
+    if [[ ! "$key_mode" =~ ^[0-9]+$ ]]; then
+        remote_tunnel_config_error "Unable to read key permissions from $REMOTE_TUNNEL_KEY_PATH_VALUE."
+        return 1
+    fi
+    key_mode_num=$((10#$key_mode))
+    key_group=$(( (key_mode_num / 10) % 10 ))
+    key_other=$(( key_mode_num % 10 ))
+    if (( key_group != 0 || key_other != 0 )); then
+        remote_tunnel_config_error "REMOTE_TUNNEL_KEY_PATH permissions are too open ($key_mode). Use 600 or 400."
+        return 1
+    fi
+
+    REMOTE_TUNNEL_LAST_ERROR_VALUE=""
+    return 0
+}
+
+function remote_tunnel_start() {
+    local autossh_pid=""
+    local connected_at=""
+    local exit_code=1
+    local ssh_target
+    local cleanup_reason="remote tunnel stopped by signal"
+
+    load_remote_tunnel_env
+    if ! remote_tunnel_attempt_auto_register; then
+        write_remote_tunnel_state "false" "" "$REMOTE_TUNNEL_LAST_ERROR_VALUE" || true
+        return 1
+    fi
+    # Reload env after auto-registration in case values were persisted.
+    load_remote_tunnel_env
+    remote_tunnel_validate_config
+    case $? in
+        0)
+            ;;
+        3)
+            echo -en "[  \e[32mOK\e[0m  ] "
+            echo "Remote tunnel disabled (REMOTE_TUNNEL_ENABLED=false)."
+            write_remote_tunnel_state "false" "" "$REMOTE_TUNNEL_LAST_ERROR_VALUE" || true
+            return 3
+            ;;
+        *)
+            write_remote_tunnel_state "false" "" "$REMOTE_TUNNEL_LAST_ERROR_VALUE" || true
+            return 1
+            ;;
+    esac
+
+    write_remote_tunnel_state "false" "" "connecting" || true
+    ssh_target="${REMOTE_TUNNEL_BASTION_USER_VALUE}@${REMOTE_TUNNEL_BASTION_HOST_VALUE}"
+
+    trap 'cleanup_reason="remote tunnel stopped by system"; if [[ -n "$autossh_pid" ]] && kill -0 "$autossh_pid" >/dev/null 2>&1; then kill "$autossh_pid" >/dev/null 2>&1 || true; wait "$autossh_pid" >/dev/null 2>&1 || true; fi; rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true; write_remote_tunnel_state "false" "$connected_at" "$cleanup_reason" || true; exit 0' INT TERM
+
+    autossh -M 0 -N \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval="$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE" \
+        -o ServerAliveCountMax="$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE" \
+        -o ConnectTimeout="$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE" \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" \
+        -o IdentitiesOnly=yes \
+        -i "$REMOTE_TUNNEL_KEY_PATH_VALUE" \
+        -p "$REMOTE_TUNNEL_BASTION_PORT_VALUE" \
+        -R "127.0.0.1:${REMOTE_TUNNEL_REMOTE_PORT_VALUE}:${REMOTE_TUNNEL_LOCAL_HOST_VALUE}:${REMOTE_TUNNEL_LOCAL_PORT_VALUE}" \
+        "$ssh_target" &
+    autossh_pid="$!"
+
+    mkdir -p "$(dirname "$REMOTE_TUNNEL_PID_FILE")" >/dev/null 2>&1 || true
+    printf "%s\n" "$autossh_pid" > "$REMOTE_TUNNEL_PID_FILE" 2>/dev/null || true
+
+    sleep 2
+    if ! kill -0 "$autossh_pid" >/dev/null 2>&1; then
+        wait "$autossh_pid" >/dev/null 2>&1 || exit_code=$?
+        rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true
+        write_remote_tunnel_state "false" "" "autossh exited before tunnel became ready (exit $exit_code)" || true
+        trap - INT TERM
+        return "$exit_code"
+    fi
+
+    connected_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    write_remote_tunnel_state "true" "$connected_at" "" || true
+
+    wait "$autossh_pid" >/dev/null 2>&1
+    exit_code=$?
+    rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true
+    write_remote_tunnel_state "false" "$connected_at" "autossh exited (exit $exit_code)" || true
+    trap - INT TERM
+    return "$exit_code"
+}
+
+function remote_tunnel_stop() {
+    local pid
+
+    load_remote_tunnel_env
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1; then
+            if systemctl stop "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1 || (command -v sudo >/dev/null 2>&1 && sudo systemctl stop "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1); then
+                echo -en "[  \e[32mOK\e[0m  ] "
+                echo "Stopped $REMOTE_TUNNEL_SERVICE."
+            else
+                echo -en "[\e[1;33mWARN\e[0m] "
+                echo "Unable to stop $REMOTE_TUNNEL_SERVICE via systemctl."
+            fi
+        fi
+    fi
+
+    if [[ -r "$REMOTE_TUNNEL_PID_FILE" ]]; then
+        pid="$(head -n 1 "$REMOTE_TUNNEL_PID_FILE" | tr -d '\r' | xargs)"
+        if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
+            kill "$pid" >/dev/null 2>&1 || true
+            sleep 1
+            if kill -0 "$pid" >/dev/null 2>&1; then
+                kill -9 "$pid" >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+    rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true
+    write_remote_tunnel_state "false" "" "remote tunnel stopped by operator" || true
+    return 0
+}
+
+function remote_tunnel_status() {
+    load_remote_tunnel_env
+    local token_state="unset"
+    if [[ -n "${REMOTE_TUNNEL_ENROLL_TOKEN_VALUE:-}" ]]; then
+        token_state="set"
+    fi
+    echo "Remote tunnel environment file: $REMOTE_TUNNEL_ENV_FILE"
+    echo "Device ID: ${REMOTE_TUNNEL_DEVICE_ID_VALUE:-unset}"
+    echo "Bastion target: ${REMOTE_TUNNEL_BASTION_USER_VALUE:-unset}@${REMOTE_TUNNEL_BASTION_HOST_VALUE:-unset}:${REMOTE_TUNNEL_BASTION_PORT_VALUE}"
+    echo "Reverse bind: 127.0.0.1:${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-unset} -> ${REMOTE_TUNNEL_LOCAL_HOST_VALUE}:${REMOTE_TUNNEL_LOCAL_PORT_VALUE}"
+    echo "Key path: ${REMOTE_TUNNEL_KEY_PATH_VALUE:-unset}"
+    echo "Known hosts path: ${REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE:-unset}"
+    echo "Auto-register enabled: ${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE:-false}"
+    echo "Enrollment endpoint: ${REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE:-unset}"
+    echo "Enrollment token: $token_state"
+
+    if command -v systemctl >/dev/null 2>&1; then
+        local active_state enabled_state
+        active_state="$(systemctl is-active "$REMOTE_TUNNEL_SERVICE" 2>/dev/null || true)"
+        enabled_state="$(systemctl is-enabled "$REMOTE_TUNNEL_SERVICE" 2>/dev/null || true)"
+        echo "Service: $REMOTE_TUNNEL_SERVICE (active=$active_state, enabled=$enabled_state)"
+    fi
+
+    REMOTE_TUNNEL_STATE_FILE_PATH="$(resolve_remote_tunnel_state_file_path)"
+    echo "State file: $REMOTE_TUNNEL_STATE_FILE_PATH"
+    if [[ -r "$REMOTE_TUNNEL_STATE_FILE_PATH" ]]; then
+        cat "$REMOTE_TUNNEL_STATE_FILE_PATH"
+    else
+        echo '{"connected":false,"lastError":"remote tunnel state not found"}'
+    fi
+    return 0
 }
 
 function resolve_state_file_path() {
@@ -1243,7 +1962,7 @@ function write_update_state_files() {
 
     tmp_file="$(mktemp "/tmp/upri-sender-state.XXXXXX.json")" || return 1
     cat <<EOF > "$tmp_file"
-{"timestamp":"$(json_escape "$now_iso")","bundleTag":"$(json_escape "$bundle_tag")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","backendResult":"$(json_escape "$backend_result")","frontendResult":"$(json_escape "$frontend_result")","scriptSyncResult":"$(json_escape "$script_sync_result")","alertPostResult":"$(json_escape "$alert_post_result")","backend":{"exitCode":$backend_exit,"pullState":"$(json_escape "$backend_pull_state")","imageRef":"$(json_escape "$backend_ref")","bundleVersion":"$(json_escape "$backend_bundle_version")"},"frontend":{"exitCode":$frontend_exit,"pullState":"$(json_escape "$frontend_pull_state")","imageRef":"$(json_escape "$frontend_ref")","bundleVersion":"$(json_escape "$frontend_bundle_version")"}}
+{"timestamp":"$(json_escape "$now_iso")","bundleTag":"$(json_escape "$bundle_tag")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","backendResult":"$(json_escape "$backend_result")","frontendResult":"$(json_escape "$frontend_result")","scriptSyncResult":"$(json_escape "$script_sync_result")","alertPostResult":"$(json_escape "$alert_post_result")","rollback":{"result":"$(json_escape "$LAST_ROLLBACK_RESULT")","backendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"frontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"backendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","frontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")"},"backend":{"exitCode":$backend_exit,"pullState":"$(json_escape "$backend_pull_state")","imageRef":"$(json_escape "$backend_ref")","bundleVersion":"$(json_escape "$backend_bundle_version")"},"frontend":{"exitCode":$frontend_exit,"pullState":"$(json_escape "$frontend_pull_state")","imageRef":"$(json_escape "$frontend_ref")","bundleVersion":"$(json_escape "$frontend_bundle_version")"}}
 EOF
 
     if install_data_payload "$tmp_file" "$state_path" 0644; then
@@ -1267,6 +1986,11 @@ FRONTEND_DIGEST=$frontend_digest
 BUNDLE_TAG=$bundle_tag
 BACKEND_BUNDLE_VERSION=$backend_bundle_version
 FRONTEND_BUNDLE_VERSION=$frontend_bundle_version
+ROLLBACK_RESULT=$LAST_ROLLBACK_RESULT
+ROLLBACK_BACKEND_EXIT=$LAST_ROLLBACK_BACKEND_EXIT
+ROLLBACK_FRONTEND_EXIT=$LAST_ROLLBACK_FRONTEND_EXIT
+ROLLBACK_BACKEND_TARGET=$LAST_ROLLBACK_BACKEND_TARGET
+ROLLBACK_FRONTEND_TARGET=$LAST_ROLLBACK_FRONTEND_TARGET
 STATE_TS=$now_epoch
 EOF
 }
@@ -1359,7 +2083,7 @@ function post_auto_update_alert() {
 
     local payload
     payload=$(cat <<EOF
-{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"device.alert","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"AUTO_UPDATE","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-auto-update","notificationScope":"admin-only","backendExitCode":$backend_exit,"frontendExitCode":$frontend_exit,"backendPullState":"$(json_escape "$backend_pull_state")","frontendPullState":"$(json_escape "$frontend_pull_state")","backendScriptUpdate":"$(json_escape "$backend_script_update")","frontendScriptUpdate":"$(json_escape "$frontend_script_update")","bundleTag":"$(json_escape "$bundle_tag")","bundleVersion":"$(json_escape "$backend_bundle_version")","frontendBundleVersion":"$(json_escape "$frontend_bundle_version")","backendImageRef":"$(json_escape "$backend_image_ref")","frontendImageRef":"$(json_escape "$frontend_image_ref")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","scriptSyncResult":"$(json_escape "$script_sync_result")"},"dedupeKey":"$(json_escape "$dedupe_key")"}
+{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"device.alert","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"AUTO_UPDATE","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-auto-update","notificationScope":"admin-only","backendExitCode":$backend_exit,"frontendExitCode":$frontend_exit,"backendPullState":"$(json_escape "$backend_pull_state")","frontendPullState":"$(json_escape "$frontend_pull_state")","backendScriptUpdate":"$(json_escape "$backend_script_update")","frontendScriptUpdate":"$(json_escape "$frontend_script_update")","bundleTag":"$(json_escape "$bundle_tag")","bundleVersion":"$(json_escape "$backend_bundle_version")","frontendBundleVersion":"$(json_escape "$frontend_bundle_version")","backendImageRef":"$(json_escape "$backend_image_ref")","frontendImageRef":"$(json_escape "$frontend_image_ref")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","scriptSyncResult":"$(json_escape "$script_sync_result")","rollbackResult":"$(json_escape "$LAST_ROLLBACK_RESULT")","rollbackBackendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"rollbackFrontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"rollbackBackendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","rollbackFrontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")"},"dedupeKey":"$(json_escape "$dedupe_key")"}
 EOF
 )
 
@@ -1438,18 +2162,106 @@ function ensure_host_scripts_dir() {
     return 1
 }
 
+function attempt_auto_update_rollback() {
+    local backend_previous_ref="$1"
+    local frontend_previous_ref="$2"
+    local target_backend_ref="$3"
+    local target_frontend_ref="$4"
+    local should_rollback_backend=0
+    local should_rollback_frontend=0
+    local backend_output frontend_output
+
+    LAST_ROLLBACK_RESULT="not-needed"
+    LAST_ROLLBACK_BACKEND_EXIT=0
+    LAST_ROLLBACK_FRONTEND_EXIT=0
+    LAST_ROLLBACK_BACKEND_TARGET="none"
+    LAST_ROLLBACK_FRONTEND_TARGET="none"
+
+    if ! is_truthy "$AUTO_UPDATE_ROLLBACK_ENABLED"; then
+        LAST_ROLLBACK_RESULT="disabled"
+        return 0
+    fi
+
+    if [[ -n "$backend_previous_ref" && "$backend_previous_ref" != "$target_backend_ref" ]]; then
+        should_rollback_backend=1
+        LAST_ROLLBACK_BACKEND_TARGET="$backend_previous_ref"
+    fi
+    if [[ -n "$frontend_previous_ref" && "$frontend_previous_ref" != "$target_frontend_ref" ]]; then
+        should_rollback_frontend=1
+        LAST_ROLLBACK_FRONTEND_TARGET="$frontend_previous_ref"
+    fi
+
+    if [[ $should_rollback_backend -eq 0 && $should_rollback_frontend -eq 0 ]]; then
+        LAST_ROLLBACK_RESULT="not-needed"
+        return 0
+    fi
+
+    LAST_ROLLBACK_RESULT="in-progress"
+
+    if [[ $should_rollback_backend -eq 1 ]]; then
+        backend_output="$(update_container "$backend_previous_ref" 2>&1)"
+        LAST_ROLLBACK_BACKEND_EXIT=$?
+        if [[ -n "$backend_output" ]]; then
+            echo "$backend_output"
+        fi
+    fi
+
+    if [[ $should_rollback_frontend -eq 1 ]]; then
+        if [[ -x /usr/local/bin/sender-frontend ]]; then
+            frontend_output="$(/usr/local/bin/sender-frontend UPDATE "$frontend_previous_ref" 2>&1)"
+            LAST_ROLLBACK_FRONTEND_EXIT=$?
+            if [[ -n "$frontend_output" ]]; then
+                echo "$frontend_output"
+            fi
+        else
+            LAST_ROLLBACK_FRONTEND_EXIT=127
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "sender-frontend script is missing; cannot rollback frontend."
+        fi
+    fi
+
+    if [[ $LAST_ROLLBACK_BACKEND_EXIT -eq 0 && $LAST_ROLLBACK_FRONTEND_EXIT -eq 0 ]]; then
+        LAST_ROLLBACK_RESULT="success"
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Rollback completed successfully."
+        return 0
+    fi
+
+    LAST_ROLLBACK_RESULT="failed"
+    echo -en "[\e[1;31mFAILED\e[0m] "
+    echo "Rollback failed (backendExit=$LAST_ROLLBACK_BACKEND_EXIT frontendExit=$LAST_ROLLBACK_FRONTEND_EXIT)."
+    return 1
+}
+
 function update_stack_with_alert() {
     local backend_output backend_exit frontend_output frontend_exit
     local backend_pull_state frontend_pull_state
     local backend_result frontend_result
     local backend_current_digest frontend_current_digest
+    local backend_previous_ref frontend_previous_ref
+    local target_backend_ref target_frontend_ref
+    local target_backend_digest target_frontend_digest
+    local target_backend_version target_frontend_version
     local alert_code severity summary
+
+    LAST_ROLLBACK_RESULT="not-needed"
+    LAST_ROLLBACK_BACKEND_EXIT=0
+    LAST_ROLLBACK_FRONTEND_EXIT=0
+    LAST_ROLLBACK_BACKEND_TARGET="none"
+    LAST_ROLLBACK_FRONTEND_TARGET="none"
 
     rm -f "$LEGACY_AUTO_UPDATE_STATE_FILE" >/dev/null 2>&1 || true
     refresh_sender_scripts
     ensure_host_scripts_dir || true
 
     if ! resolve_bundle_targets; then
+        target_backend_ref="$LAST_BACKEND_IMAGE_REF"
+        target_frontend_ref="$LAST_FRONTEND_IMAGE_REF"
+        target_backend_digest="$LAST_BACKEND_DIGEST"
+        target_frontend_digest="$LAST_FRONTEND_DIGEST"
+        target_backend_version="$LAST_BUNDLE_VERSION"
+        target_frontend_version="$LAST_FRONTEND_BUNDLE_VERSION"
+
         backend_exit=2
         frontend_exit=2
         backend_pull_state="failed-precheck"
@@ -1470,13 +2282,13 @@ function update_stack_with_alert() {
             "$frontend_pull_state" \
             "$SCRIPT_BACKEND_UPDATE_STATE" \
             "$SCRIPT_FRONTEND_UPDATE_STATE" \
-            "$LAST_BACKEND_IMAGE_REF" \
-            "$LAST_FRONTEND_IMAGE_REF" \
-            "$LAST_BACKEND_DIGEST" \
-            "$LAST_FRONTEND_DIGEST" \
+            "$target_backend_ref" \
+            "$target_frontend_ref" \
+            "$target_backend_digest" \
+            "$target_frontend_digest" \
             "$SENDER_BUNDLE_TAG" \
-            "$LAST_BUNDLE_VERSION" \
-            "$LAST_FRONTEND_BUNDLE_VERSION" \
+            "$target_backend_version" \
+            "$target_frontend_version" \
             "$LAST_SCRIPT_SYNC_RESULT"
 
         evaluate_and_post_disk_space_alert || true
@@ -1488,28 +2300,37 @@ function update_stack_with_alert() {
             "$frontend_exit" \
             "$backend_pull_state" \
             "$frontend_pull_state" \
-            "$LAST_BACKEND_IMAGE_REF" \
-            "$LAST_FRONTEND_IMAGE_REF" \
-            "$LAST_BACKEND_DIGEST" \
-            "$LAST_FRONTEND_DIGEST" \
+            "$target_backend_ref" \
+            "$target_frontend_ref" \
+            "$target_backend_digest" \
+            "$target_frontend_digest" \
             "$SENDER_BUNDLE_TAG" \
-            "$LAST_BUNDLE_VERSION" \
-            "$LAST_FRONTEND_BUNDLE_VERSION" \
+            "$target_backend_version" \
+            "$target_frontend_version" \
             "$LAST_SCRIPT_SYNC_RESULT" \
             "$LAST_ALERT_POST_RESULT"
         return 1
     fi
 
-    backend_current_digest="$(get_container_repo_digest "$CONTAINER" "$SENDER_BACKEND_IMAGE_REPO")"
-    frontend_current_digest="$(get_container_repo_digest "sender-frontend" "$SENDER_FRONTEND_IMAGE_REPO")"
+    target_backend_ref="$LAST_BACKEND_IMAGE_REF"
+    target_frontend_ref="$LAST_FRONTEND_IMAGE_REF"
+    target_backend_digest="$LAST_BACKEND_DIGEST"
+    target_frontend_digest="$LAST_FRONTEND_DIGEST"
+    target_backend_version="$LAST_BUNDLE_VERSION"
+    target_frontend_version="$LAST_FRONTEND_BUNDLE_VERSION"
 
-    if [[ -n "$backend_current_digest" && "$backend_current_digest" == "$LAST_BACKEND_IMAGE_REF" ]]; then
+    backend_previous_ref="$(get_container_repo_digest "$CONTAINER" "$SENDER_BACKEND_IMAGE_REPO")"
+    frontend_previous_ref="$(get_container_repo_digest "sender-frontend" "$SENDER_FRONTEND_IMAGE_REPO")"
+    backend_current_digest="$backend_previous_ref"
+    frontend_current_digest="$frontend_previous_ref"
+
+    if [[ -n "$backend_current_digest" && "$backend_current_digest" == "$target_backend_ref" ]]; then
         backend_exit=0
         backend_pull_state="no-change"
         backend_result="no-change"
     else
         LAST_PULL_RESULT="unknown"
-        backend_output="$(update_container "$LAST_BACKEND_IMAGE_REF" 2>&1)"
+        backend_output="$(update_container "$target_backend_ref" 2>&1)"
         backend_exit=$?
         if [[ -n "$backend_output" ]]; then
             echo "$backend_output"
@@ -1523,12 +2344,12 @@ function update_stack_with_alert() {
         fi
     fi
 
-    if [[ -n "$frontend_current_digest" && "$frontend_current_digest" == "$LAST_FRONTEND_IMAGE_REF" ]]; then
+    if [[ -n "$frontend_current_digest" && "$frontend_current_digest" == "$target_frontend_ref" ]]; then
         frontend_exit=0
         frontend_pull_state="no-change"
         frontend_result="no-change"
     elif [[ -x /usr/local/bin/sender-frontend ]]; then
-        frontend_output="$(/usr/local/bin/sender-frontend UPDATE "$LAST_FRONTEND_IMAGE_REF" 2>&1)"
+        frontend_output="$(/usr/local/bin/sender-frontend UPDATE "$target_frontend_ref" 2>&1)"
         frontend_exit=$?
         if [[ -n "$frontend_output" ]]; then
             echo "$frontend_output"
@@ -1546,6 +2367,14 @@ function update_stack_with_alert() {
         frontend_result="failed"
         echo -en "[\e[1;31mFAILED\e[0m] "
         echo "sender-frontend script is missing or not executable."
+    fi
+
+    if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
+        attempt_auto_update_rollback \
+            "$backend_previous_ref" \
+            "$frontend_previous_ref" \
+            "$target_backend_ref" \
+            "$target_frontend_ref" || true
     fi
 
     if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
@@ -1572,13 +2401,13 @@ function update_stack_with_alert() {
         "$frontend_pull_state" \
         "$SCRIPT_BACKEND_UPDATE_STATE" \
         "$SCRIPT_FRONTEND_UPDATE_STATE" \
-        "$LAST_BACKEND_IMAGE_REF" \
-        "$LAST_FRONTEND_IMAGE_REF" \
-        "$LAST_BACKEND_DIGEST" \
-        "$LAST_FRONTEND_DIGEST" \
+        "$target_backend_ref" \
+        "$target_frontend_ref" \
+        "$target_backend_digest" \
+        "$target_frontend_digest" \
         "$SENDER_BUNDLE_TAG" \
-        "$LAST_BUNDLE_VERSION" \
-        "$LAST_FRONTEND_BUNDLE_VERSION" \
+        "$target_backend_version" \
+        "$target_frontend_version" \
         "$LAST_SCRIPT_SYNC_RESULT"
 
     evaluate_and_post_disk_space_alert || true
@@ -1590,13 +2419,13 @@ function update_stack_with_alert() {
         "$frontend_exit" \
         "$backend_pull_state" \
         "$frontend_pull_state" \
-        "$LAST_BACKEND_IMAGE_REF" \
-        "$LAST_FRONTEND_IMAGE_REF" \
-        "$LAST_BACKEND_DIGEST" \
-        "$LAST_FRONTEND_DIGEST" \
+        "$target_backend_ref" \
+        "$target_frontend_ref" \
+        "$target_backend_digest" \
+        "$target_frontend_digest" \
         "$SENDER_BUNDLE_TAG" \
-        "$LAST_BUNDLE_VERSION" \
-        "$LAST_FRONTEND_BUNDLE_VERSION" \
+        "$target_backend_version" \
+        "$target_frontend_version" \
         "$LAST_SCRIPT_SYNC_RESULT" \
         "$LAST_ALERT_POST_RESULT"
 
@@ -1614,6 +2443,11 @@ function update_container_with_state() {
 
     refresh_sender_scripts
     ensure_host_scripts_dir || true
+    LAST_ROLLBACK_RESULT="not-applicable"
+    LAST_ROLLBACK_BACKEND_EXIT=0
+    LAST_ROLLBACK_FRONTEND_EXIT=0
+    LAST_ROLLBACK_BACKEND_TARGET="none"
+    LAST_ROLLBACK_FRONTEND_TARGET="none"
 
     if [[ -z "$target_ref" ]]; then
         target_ref="$(resolve_image_ref "${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}")" || return 1
@@ -1988,8 +2822,9 @@ function install_service() {
     if [[ -f "$UNIT_FILE" ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Unit file $UNIT_FILE already exists."
-        install_update_timer
-        return $?
+        install_update_timer || return $?
+        install_remote_tunnel_service || return $?
+        return 0
     else
     # Write unit-file
         cat <<EOF > "$UNIT_FILE"
@@ -2013,11 +2848,12 @@ EOF
       # Check if unit-file is successfully written as a disabled service
       systemctl daemon-reload
       systemctl --quiet enable "$SERVICE" >/dev/null 2>&1
-      if [[ $? -eq 0 ]]; then
+          if [[ $? -eq 0 ]]; then
             echo -en "[  \e[32mOK\e[0m  ] "
             echo "$SERVICE installed as an enabled service."
-          install_update_timer
-          return $?
+          install_update_timer || return $?
+          install_remote_tunnel_service || return $?
+          return 0
       else
           echo -en "[\e[1;31mFAILED\e[0m] "
           echo "Something went wrong in installing $SERVICE."
@@ -2142,6 +2978,172 @@ EOF
     echo -en "[\e[1;31mFAILED\e[0m] "
     echo "Failed to enable or start $WATCHDOG_TIMER."
     return 1
+}
+
+function write_remote_tunnel_env_template_if_missing() {
+    local env_file="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
+    local env_dir
+    local tmp_file
+
+    REMOTE_TUNNEL_ENV_FILE="$env_file"
+    if [[ -f "$env_file" ]]; then
+        return 0
+    fi
+
+    env_dir="$(dirname "$env_file")"
+    if ! mkdir -p "$env_dir" >/dev/null 2>&1; then
+        if ! (command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$env_dir" >/dev/null 2>&1); then
+            echo -en "[\e[1;33mWARN\e[0m] "
+            echo "Unable to create remote tunnel env directory: $env_dir"
+            return 1
+        fi
+    fi
+
+    tmp_file="$(mktemp "/tmp/upri-sender-remote-tunnel-env.XXXXXX")" || return 1
+    cat <<EOF > "$tmp_file"
+# Sender reverse SSH tunnel configuration
+REMOTE_TUNNEL_ENABLED=false
+REMOTE_TUNNEL_DEVICE_ID=
+REMOTE_TUNNEL_BASTION_HOST=
+REMOTE_TUNNEL_BASTION_PORT=443
+REMOTE_TUNNEL_BASTION_USER=
+REMOTE_TUNNEL_REMOTE_PORT=
+REMOTE_TUNNEL_LOCAL_HOST=127.0.0.1
+REMOTE_TUNNEL_LOCAL_PORT=22
+REMOTE_TUNNEL_KEY_PATH=/etc/upri/remote-tunnel/id_ed25519
+REMOTE_TUNNEL_KNOWN_HOSTS_PATH=/etc/upri/remote-tunnel/known_hosts
+REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL=30
+REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX=3
+REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC=15
+REMOTE_TUNNEL_STATE_FILE=/var/lib/upri-sender/remote-tunnel-state.json
+REMOTE_TUNNEL_PID_FILE=/tmp/upri-sender-remote-tunnel.pid
+REMOTE_TUNNEL_AUTO_REGISTER_ENABLED=false
+REMOTE_TUNNEL_ENROLL_ENDPOINT=
+REMOTE_TUNNEL_ENROLL_TOKEN=
+REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC=15
+REMOTE_TUNNEL_BASTION_HOST_KEY=
+EOF
+
+    if install_data_payload "$tmp_file" "$env_file" 0640; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Created remote tunnel env template at $env_file."
+        rm -f "$tmp_file" >/dev/null 2>&1
+        return 0
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    echo -en "[\e[1;33mWARN\e[0m] "
+    echo "Unable to write remote tunnel env template at $env_file."
+    return 1
+}
+
+function install_remote_tunnel_service() {
+    cat <<EOF > "$REMOTE_TUNNEL_SERVICE_FILE"
+[Unit]
+Description=UPRI: Sender Reverse SSH Tunnel Service
+ConditionPathExists=/usr/local/bin/sender-backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=myshake
+EnvironmentFile=-$REMOTE_TUNNEL_ENV_FILE_DEFAULT
+ExecStart=/usr/local/bin/sender-backend REMOTE_TUNNEL_START
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=3
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    if [[ $? -ne 0 ]]; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to write $REMOTE_TUNNEL_SERVICE_FILE."
+        return 1
+    fi
+
+    write_remote_tunnel_env_template_if_missing || true
+
+    systemctl daemon-reload
+    if ! systemctl enable "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to enable $REMOTE_TUNNEL_SERVICE."
+        return 1
+    fi
+
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "$REMOTE_TUNNEL_SERVICE installed and enabled."
+
+    load_remote_tunnel_env
+    remote_tunnel_apply_runtime_permissions || true
+    remote_tunnel_attempt_auto_register || true
+    remote_tunnel_apply_runtime_permissions || true
+    load_remote_tunnel_env
+    remote_tunnel_validate_config
+    case $? in
+        0)
+            if systemctl restart "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1; then
+                echo -en "[  \e[32mOK\e[0m  ] "
+                echo "$REMOTE_TUNNEL_SERVICE started."
+            else
+                echo -en "[\e[1;33mWARN\e[0m] "
+                echo "$REMOTE_TUNNEL_SERVICE is enabled but did not start cleanly."
+            fi
+            ;;
+        3)
+            echo -en "[  \e[32mOK\e[0m  ] "
+            echo "Remote tunnel is disabled in $REMOTE_TUNNEL_ENV_FILE; service start skipped."
+            ;;
+        *)
+            echo -en "[\e[1;33mWARN\e[0m] "
+            echo "Remote tunnel service installed but config is incomplete. Fill $REMOTE_TUNNEL_ENV_FILE before starting."
+            ;;
+    esac
+    return 0
+}
+
+function uninstall_remote_tunnel_service() {
+    local removed=0
+    local failed=0
+    local state_path
+
+    sudo systemctl stop "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1
+    sudo systemctl disable "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1
+
+    if [[ -f "$REMOTE_TUNNEL_SERVICE_FILE" ]]; then
+        if sudo rm -f "$REMOTE_TUNNEL_SERVICE_FILE"; then
+            removed=1
+        else
+            echo -en "[\e[1;31mFAILED\e[0m] "
+            echo "Failed to remove $REMOTE_TUNNEL_SERVICE_FILE."
+            failed=1
+        fi
+    fi
+
+    rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true
+    state_path="$(resolve_remote_tunnel_state_file_path)"
+    sudo rm -f "$state_path" >/dev/null 2>&1 || true
+    if [[ "$state_path" != "/tmp/upri-sender/remote-tunnel-state.json" ]]; then
+        sudo rm -f "/tmp/upri-sender/remote-tunnel-state.json" >/dev/null 2>&1 || true
+    fi
+
+    if ! sudo systemctl daemon-reload >/dev/null 2>&1; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to reload systemd daemon."
+        failed=1
+    fi
+
+    if [[ $failed -eq 1 ]]; then
+        return 1
+    fi
+
+    if [[ $removed -eq 1 ]]; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Remote tunnel service removed."
+    fi
+    return 0
 }
 
 function uninstall_update_timer() {
@@ -2319,6 +3321,51 @@ function create_container() {
     fi
     if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
         alert_env_flags+=(--env "RSHAKE_ALERT_SHARED_SECRET=${RSHAKE_ALERT_SHARED_SECRET}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_RETRY_ATTEMPTS:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_RETRY_ATTEMPTS=${RSHAKE_ALERT_RETRY_ATTEMPTS}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_RETRY_BASE_MS:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_RETRY_BASE_MS=${RSHAKE_ALERT_RETRY_BASE_MS}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_MIN_INTERVAL_SEC:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_MIN_INTERVAL_SEC=${RSHAKE_ALERT_MIN_INTERVAL_SEC}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_QUEUE_ENABLED:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_QUEUE_ENABLED=${RSHAKE_ALERT_QUEUE_ENABLED}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_QUEUE_FILE:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_QUEUE_FILE=${RSHAKE_ALERT_QUEUE_FILE}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_QUEUE_MAX_SIZE:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_QUEUE_MAX_SIZE=${RSHAKE_ALERT_QUEUE_MAX_SIZE}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_QUEUE_MAX_ATTEMPTS:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_QUEUE_MAX_ATTEMPTS=${RSHAKE_ALERT_QUEUE_MAX_ATTEMPTS}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_QUEUE_BACKOFF_MS:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_QUEUE_BACKOFF_MS=${RSHAKE_ALERT_QUEUE_BACKOFF_MS}")
+    fi
+    if [[ -n "${RSHAKE_ALERT_COOLDOWN_STATE_FILE:-}" ]]; then
+        alert_env_flags+=(--env "RSHAKE_ALERT_COOLDOWN_STATE_FILE=${RSHAKE_ALERT_COOLDOWN_STATE_FILE}")
+    fi
+    if [[ -n "${W1_ALLOW_INSECURE_TLS:-}" ]]; then
+        alert_env_flags+=(--env "W1_ALLOW_INSECURE_TLS=${W1_ALLOW_INSECURE_TLS}")
+    fi
+    if [[ -n "${SENDER_STRUCTURED_LOGS:-}" ]]; then
+        alert_env_flags+=(--env "SENDER_STRUCTURED_LOGS=${SENDER_STRUCTURED_LOGS}")
+    fi
+    if [[ -n "${METRICS_PERSIST_HEALTH_HISTORY:-}" ]]; then
+        alert_env_flags+=(--env "METRICS_PERSIST_HEALTH_HISTORY=${METRICS_PERSIST_HEALTH_HISTORY}")
+    fi
+    if [[ -n "${METRICS_HEALTH_HISTORY_FILE:-}" ]]; then
+        alert_env_flags+=(--env "METRICS_HEALTH_HISTORY_FILE=${METRICS_HEALTH_HISTORY_FILE}")
+    fi
+    if [[ -n "${METRICS_HEALTH_HISTORY_LIMIT:-}" ]]; then
+        alert_env_flags+=(--env "METRICS_HEALTH_HISTORY_LIMIT=${METRICS_HEALTH_HISTORY_LIMIT}")
+    fi
+    if [[ -n "${METRICS_HEALTH_HISTORY_FLUSH_MS:-}" ]]; then
+        alert_env_flags+=(--env "METRICS_HEALTH_HISTORY_FLUSH_MS=${METRICS_HEALTH_HISTORY_FLUSH_MS}")
     fi
     if [[ -n "${AUTO_UPDATE_ALERT_ENDPOINT:-}" ]]; then
         alert_env_flags+=(--env "AUTO_UPDATE_ALERT_ENDPOINT=${AUTO_UPDATE_ALERT_ENDPOINT}")
@@ -2564,6 +3611,7 @@ function uninstall_service() {
     if [[ ! -f "$UNIT_FILE" ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Unit file $UNIT_FILE does not exist."
+        uninstall_remote_tunnel_service || true
         uninstall_update_timer
         return $?
     fi
@@ -2586,6 +3634,7 @@ function uninstall_service() {
     if [[ $? -eq 0 ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "$SERVICE uninstalled successfully."
+        uninstall_remote_tunnel_service || true
         uninstall_update_timer
         return $?
     else
@@ -2595,7 +3644,7 @@ function uninstall_service() {
     fi
 }
 
-## execute function based on argument: INSTALL_SERVICE, NETWORK_SETUP, PULL, CREATE, START, STOP
+## execute function based on argument
 case $1 in
     "INSTALL_SERVICE")
         install_service
@@ -2651,7 +3700,22 @@ case $1 in
     "UNINSTALL_WATCHDOG_TIMER")
         uninstall_watchdog_timer
         ;;
+    "INSTALL_REMOTE_TUNNEL_SERVICE")
+        install_remote_tunnel_service
+        ;;
+    "UNINSTALL_REMOTE_TUNNEL_SERVICE")
+        uninstall_remote_tunnel_service
+        ;;
+    "REMOTE_TUNNEL_START")
+        remote_tunnel_start
+        ;;
+    "REMOTE_TUNNEL_STOP")
+        remote_tunnel_stop
+        ;;
+    "REMOTE_TUNNEL_STATUS")
+        remote_tunnel_status
+        ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|INSTALL_WATCHDOG_TIMER|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|WATCHDOG_CHECK|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER|UNINSTALL_WATCHDOG_TIMER]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|INSTALL_WATCHDOG_TIMER|INSTALL_REMOTE_TUNNEL_SERVICE|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|WATCHDOG_CHECK|REMOTE_TUNNEL_START|REMOTE_TUNNEL_STOP|REMOTE_TUNNEL_STATUS|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER|UNINSTALL_WATCHDOG_TIMER|UNINSTALL_REMOTE_TUNNEL_SERVICE]"
         ;;
 esac

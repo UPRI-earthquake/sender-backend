@@ -1,13 +1,15 @@
 #!/bin/bash
 set -u
 
-BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/sender-backend.sh"
-FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/main/sender-frontend.sh"
+BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/sender-backend.sh"
+FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/rshake-alerts/sender-frontend.sh"
+TUNNEL_SETUP_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/setup-remote-tunnel.sh"
 
 INSTALL_DIR="/usr/local/bin"
 HOST_SCRIPTS_DIR="${SENDER_HOST_SCRIPTS_DIR:-/opt/upri/host-scripts}"
 BACKEND_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/sender-backend"
 FRONTEND_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/sender-frontend"
+TUNNEL_SETUP_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/setup-remote-tunnel"
 REBOOT_POLICY_DEFAULT="on-failure"
 REBOOT_POLICY="${SENDER_INSTALL_REBOOT_POLICY:-$REBOOT_POLICY_DEFAULT}"
 START_RETRY_COUNT_DEFAULT=3
@@ -211,6 +213,7 @@ main() {
 
     download_payload "$BACKEND_URL" "$BACKEND_PAYLOAD_PATH" || exit 1
     download_payload "$FRONTEND_URL" "$FRONTEND_PAYLOAD_PATH" || exit 1
+    download_payload "$TUNNEL_SETUP_URL" "$TUNNEL_SETUP_PAYLOAD_PATH" || exit 1
 
     install_wrapper "${INSTALL_DIR}/sender-backend" "$BACKEND_PAYLOAD_PATH" || {
         echo -en "[\e[1;31mFAILED\e[0m] "
@@ -221,6 +224,12 @@ main() {
     install_wrapper "${INSTALL_DIR}/sender-frontend" "$FRONTEND_PAYLOAD_PATH" || {
         echo -en "[\e[1;31mFAILED\e[0m] "
         echo "Failed to install sender-frontend wrapper"
+        exit 1
+    }
+
+    install_wrapper "${INSTALL_DIR}/sender-setup-remote-tunnel" "$TUNNEL_SETUP_PAYLOAD_PATH" || {
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to install sender-setup-remote-tunnel wrapper"
         exit 1
     }
 

@@ -4,13 +4,13 @@ Sender-backend program is the server-side component of the sender web applicatio
 ## Installation on a [RaspberryShake Device](https://shop.raspberryshake.org/)
 To install the entire sender software package, run the following command on the [RaspberryShake terminal](https://manual.raspberryshake.org/ssh.html):
 ```bash
-bash <(curl "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/install.sh")
+bash <(curl "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/install.sh")
 ```
 
 ### Optional: pre-install health check
 Before installing, you can verify connectivity, disk space, OS/arch, and time sync:
 ```bash
-bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/preinstall-health-check.sh")
+bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/preinstall-health-check.sh")
 ```
 If everything passes, proceed with the installer command above. Results are printed directly to the terminal.
 
@@ -23,7 +23,7 @@ The backend container mounts `/opt/upri/host-scripts` and runs a startup sync ho
 
 For existing deployments using older launchers, run one-time bootstrap:
 ```bash
-bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/main/update.sh")
+bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/update.sh")
 ```
 After bootstrap, normal operator commands stay the same (`sender-backend START`, etc.).
 
@@ -65,6 +65,9 @@ Backend: `http://localhost:5001` (and frontend, if enabled: `http://localhost:30
 To sanity-check the backend once containers are up:
 ```bash
 curl http://localhost:5001/health/time
+curl http://localhost:5001/health/resources
+curl http://localhost:5001/health/sender-state
+curl http://localhost:5001/health/metrics
 curl http://localhost:5001/device/info
 ```
 
@@ -73,6 +76,7 @@ Host update scripts resolve tags to digests before deployment:
 - `SENDER_BUNDLE_TAG` (default `latest`; can be pinned to semver like `1.2.2`)
 - `SENDER_BACKEND_IMAGE_REPO` (default `ghcr.io/upri-earthquake/sender-backend`)
 - `SENDER_FRONTEND_IMAGE_REPO` (default `ghcr.io/upri-earthquake/sender-frontend`)
+- `AUTO_UPDATE_ROLLBACK_ENABLED` (default `true`; attempts rollback to previous running digests when an update run fails)
 
 State snapshots are written to `/var/lib/upri-sender/update-state.json` (fallback to `/tmp/upri-sender/update-state.json` if permissions prevent writing to `/var/lib`).
 
@@ -86,8 +90,32 @@ Useful env controls:
 - `DISK_ALERT_PATHS`, `DISK_ALERT_WARN_FREE_PCT`, `DISK_ALERT_CRITICAL_FREE_PCT`, `DISK_ALERT_RECOVERY_FREE_PCT`
 - `TOKEN_REFRESH_FAILED_CONSECUTIVE_THRESHOLD`, `TOKEN_REFRESH_SUCCESS_COOLDOWN_SEC`
 - `WATCHDOG_ENABLED`, `WATCHDOG_INTERVAL_MINUTES`, `WATCHDOG_BACKEND_STOPPED_MAX_SEC`, `WATCHDOG_FRONTEND_STOPPED_MAX_SEC`
+- Alert post resilience/cooldown: `RSHAKE_ALERT_RETRY_ATTEMPTS`, `RSHAKE_ALERT_RETRY_BASE_MS`, `RSHAKE_ALERT_MIN_INTERVAL_SEC`
+- Optional local alert queue: `RSHAKE_ALERT_QUEUE_ENABLED`, `RSHAKE_ALERT_QUEUE_FILE`, `RSHAKE_ALERT_QUEUE_MAX_SIZE`, `RSHAKE_ALERT_QUEUE_MAX_ATTEMPTS`
 
 All of the above include `details.notificationScope=admin-only` and are posted to `W1_RS_ALERT_PATH` (default `/messaging/restricted/rshake-alert`).
+
+### Sender State Snapshot Endpoint
+`/health/sender-state` returns a read-only snapshot of sender operational state files when present:
+- token refresh alert state
+- auto-update state
+- watchdog state
+- disk-alert state
+
+This helps debugging in the field without SSHing into the device for every check.
+
+### Metrics Endpoint
+`/health/metrics` exports in-process sender metrics plus rolling health trend history:
+- HTTP request counters/latency summary by path
+- alert post outcome counters (`success`, `error`, `queued`, etc.)
+- health check trend history (`network`, `time`, `resources`, `senderState`)
+
+Useful controls:
+- `METRICS_PERSIST_HEALTH_HISTORY`
+- `METRICS_HEALTH_HISTORY_FILE`
+- `METRICS_HEALTH_HISTORY_LIMIT`
+- `METRICS_HEALTH_HISTORY_FLUSH_MS`
+- `SENDER_STRUCTURED_LOGS` (`true` emits JSON request logs to stdout)
 
 ### Stack Watchdog
 `sender-backend INSTALL_SERVICE` now installs two timers:
@@ -95,6 +123,63 @@ All of the above include `details.notificationScope=admin-only` and are posted t
 - Periodic watchdog timer (`sender-stack-watchdog.timer`)
 
 The watchdog checks backend/frontend container runtime state and attempts start/restart after configured inactivity thresholds. It also enforces Docker restart policy `unless-stopped` on both containers.
+
+### Remote Tunnel (Reverse SSH)
+`sender-backend INSTALL_SERVICE` also installs and enables:
+- `sender-remote-tunnel.service` (always-on reverse SSH tunnel via `autossh`)
+
+`install.sh` provisions the service, but tunnel enrollment/config still depends on `/etc/upri/sender-remote-tunnel.env`.
+
+Remote tunnel service commands:
+- `sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`
+- `sender-backend UNINSTALL_REMOTE_TUNNEL_SERVICE`
+- `sender-backend REMOTE_TUNNEL_START`
+- `sender-backend REMOTE_TUNNEL_STOP`
+- `sender-backend REMOTE_TUNNEL_STATUS`
+
+Automatic setup helper (recommended to reduce manual steps on deployed devices):
+- `setup-remote-tunnel.sh`
+- `sender-setup-remote-tunnel` (installed by `install.sh`)
+- Example:
+  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/device/tunnel/enroll"`
+- If `--enroll-token` is omitted, the helper attempts to auto-discover an existing sender access token from current tunnel env and sender token storage.
+- The helper writes `/etc/upri/sender-remote-tunnel.env`, runs `sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`, restarts `sender-remote-tunnel.service`, and prints tunnel status.
+
+Device tunnel env file:
+- `/etc/upri/sender-remote-tunnel.env`
+- Generated template is created automatically on service install (defaults to `REMOTE_TUNNEL_ENABLED=false`).
+
+Supported tunnel env vars:
+- `REMOTE_TUNNEL_ENABLED`
+- `REMOTE_TUNNEL_DEVICE_ID`
+- `REMOTE_TUNNEL_BASTION_HOST`
+- `REMOTE_TUNNEL_BASTION_PORT`
+- `REMOTE_TUNNEL_BASTION_USER`
+- `REMOTE_TUNNEL_REMOTE_PORT`
+- `REMOTE_TUNNEL_LOCAL_HOST`
+- `REMOTE_TUNNEL_LOCAL_PORT`
+- `REMOTE_TUNNEL_KEY_PATH`
+- `REMOTE_TUNNEL_KNOWN_HOSTS_PATH`
+- `REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL`
+- `REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX`
+- `REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC`
+- `REMOTE_TUNNEL_STATE_FILE`
+- `REMOTE_TUNNEL_PID_FILE`
+- `REMOTE_TUNNEL_AUTO_REGISTER_ENABLED` (default `false`)
+- `REMOTE_TUNNEL_ENROLL_ENDPOINT` (defaults to `<W1 base>/device/tunnel/enroll` when derivable)
+- `REMOTE_TUNNEL_ENROLL_TOKEN` (sensor bearer token for enrollment API)
+- `REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC`
+- `REMOTE_TUNNEL_BASTION_HOST_KEY` (optional known_hosts pin line)
+
+`/health/sender-state` now also reports `remoteTunnel` when the state file is available.
+
+Bastion automation scripts are now server-owned under commons:
+- `earthquake-hub-deployment/earthquake-hub-commons/bastion/register-device.sh`
+- `earthquake-hub-deployment/earthquake-hub-commons/bastion/revoke-device.sh`
+- `earthquake-hub-deployment/earthquake-hub-commons/bastion/list-devices.sh`
+
+Runbook:
+- `docs/remote-tunnel-runbook.md`
 
 ### RShake settings fixtures for dev
 - `dev/settings` mirrors the `/opt/settings` layout of an RShake (including `sys` files plus `config/config.json` and `config/MD-info.json` from the screenshots). The compose file mounts this tree to `/opt/settings`, matching the default `RSHAKE_SETTINGS_PATH`.
@@ -121,3 +206,10 @@ Set these in `.env` (or your container environment) if you need to point at a re
 | Variable | Default | Description |
 | --- | --- | --- |
 | `HEALTH_ALLOW_INSECURE_TLS` | `false` | When `true`, `/health/network` skips TLS certificate verification for its HTTPS probe. Use only for troubleshooting. |
+
+### W1 TLS verification policy
+W1 API calls currently preserve legacy behavior (insecure TLS allowed). To enforce certificate verification on production W1 calls, set:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `W1_ALLOW_INSECURE_TLS` | `true` | When `false`, backend enforces TLS certificate verification for W1 calls (`/device/link`, refresh, unlink, reset-link). |

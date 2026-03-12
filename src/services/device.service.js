@@ -1,8 +1,8 @@
 const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 const https = require('https');
 const jwt = require('jsonwebtoken');
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const utils = require('./utils');
 
 const localDbPath = (fileName) => `${process.env.LOCALDBS_DIRECTORY || './localDBs'}/${fileName}`;
@@ -37,6 +37,8 @@ const tokenLeewaySeconds = 300; // refresh tokens 5 minutes before expiry
 const refreshTokenLeewaySeconds = Number(process.env.REFRESH_TOKEN_LEEWAY_SECONDS || 24 * 60 * 60); // default 24h leeway for refresh tokens
 const RELINK_REQUIRED_ERROR_CODE = 'RELINK_REQUIRED';
 const deviceStatusPath = '/device/status';
+const allowInsecureW1Tls = String(process.env.W1_ALLOW_INSECURE_TLS || 'true').trim().toLowerCase() === 'true';
+const httpsAgent = new https.Agent({ rejectUnauthorized: !allowInsecureW1Tls });
 
 function formatRelinkMessage(reason) {
   if (!reason) {
@@ -160,7 +162,12 @@ async function readJsonFile(filePath, fallback) {
 }
 
 async function writeJsonFile(filePath, data) {
-  await fs.promises.writeFile(filePath, JSON.stringify(data));
+  const dir = path.dirname(filePath);
+  const baseName = path.basename(filePath);
+  const tmpPath = path.join(dir, `.${baseName}.${process.pid}.${Date.now()}.tmp`);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(tmpPath, JSON.stringify(data));
+  await fs.promises.rename(tmpPath, filePath);
 }
 
 function normalizeDeviceInfo(rawData) {

@@ -79,11 +79,15 @@ async function loadTokenAlertState() {
 
 async function saveTokenAlertState() {
   try {
-    await fs.promises.mkdir(path.dirname(tokenRefreshAlertStatePath), { recursive: true });
+    const dir = path.dirname(tokenRefreshAlertStatePath);
+    const baseName = path.basename(tokenRefreshAlertStatePath);
+    const tmpPath = path.join(dir, `.${baseName}.${process.pid}.${Date.now()}.tmp`);
+    await fs.promises.mkdir(dir, { recursive: true });
     await fs.promises.writeFile(
-      tokenRefreshAlertStatePath,
+      tmpPath,
       JSON.stringify(tokenAlertState),
     );
+    await fs.promises.rename(tmpPath, tokenRefreshAlertStatePath);
   } catch (error) {
     console.log(`Failed to persist token refresh alert state: ${error.message || error}`);
   }
