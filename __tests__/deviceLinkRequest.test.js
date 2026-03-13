@@ -1,4 +1,5 @@
 const request = require('supertest');
+let deviceService;
 
 jest.mock('../src/services/device.service', () => {
   const actual = jest.requireActual('../src/services/device.service');
@@ -8,8 +9,14 @@ jest.mock('../src/services/device.service', () => {
       accessToken: 'test-access-token',
       refreshToken: 'test-refresh-token',
       deviceInfo: { network: 'AM', station: 'TEST' },
+      rshakeAlertCredential: {
+        sharedSecret: 'issued-secret',
+        issuedAt: '2026-03-13T00:00:00.000Z',
+      },
     }),
     persistTokenPair: jest.fn().mockResolvedValue(undefined),
+    persistAlertCredential: jest.fn().mockResolvedValue(undefined),
+    syncRshakeAlertCredential: jest.fn().mockResolvedValue({ str: 'success' }),
   };
 });
 
@@ -21,6 +28,7 @@ describe('POST /device/link', () => {
     jest.resetModules();
     process.env.NODE_ENV = 'test';
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    deviceService = require('../src/services/device.service');
     app = require('../src/app');
   });
 
@@ -72,5 +80,21 @@ describe('POST /device/link', () => {
       elevation: '42.75',
     });
     expect(response.headers['content-type']).toEqual(expect.stringContaining('json'));
+  });
+
+  it('persists the issued alert credential from the link response', async () => {
+    await request(app).post('/device/link').send({
+      username: 'test',
+      password: 'test',
+      latitude: '14.5995',
+      longitude: '121.0424',
+      elevation: '42.75',
+    });
+
+    expect(deviceService.persistAlertCredential).toHaveBeenCalledWith({
+      sharedSecret: 'issued-secret',
+      issuedAt: '2026-03-13T00:00:00.000Z',
+    });
+    expect(deviceService.syncRshakeAlertCredential).not.toHaveBeenCalled();
   });
 });

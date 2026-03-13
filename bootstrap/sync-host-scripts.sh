@@ -8,6 +8,13 @@ BUNDLE_VERSION="${SENDER_IMAGE_BUNDLE_VERSION:-unknown}"
 BUNDLE_TAG="${SENDER_BUNDLE_TAG:-latest}"
 ALERT_ENDPOINT="${AUTO_UPDATE_ALERT_ENDPOINT:-https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert}"
 ALERT_TIMEOUT_SEC="${AUTO_UPDATE_ALERT_TIMEOUT_SEC:-8}"
+ALERT_RUNTIME_ENV_FILE="${RSHAKE_ALERT_RUNTIME_ENV_FILE:-/opt/upri/runtime/alert.env}"
+
+if [ -z "${RSHAKE_ALERT_SHARED_SECRET:-}" ] && [ -r "$ALERT_RUNTIME_ENV_FILE" ]; then
+  RSHAKE_ALERT_SHARED_SECRET="$(
+    sed -n 's/^RSHAKE_ALERT_SHARED_SECRET=//p' "$ALERT_RUNTIME_ENV_FILE" | head -n 1
+  )"
+fi
 
 log_info() {
   printf '[  \033[32mOK\033[0m  ] %s\n' "$1"

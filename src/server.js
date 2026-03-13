@@ -5,7 +5,7 @@ const app = require('./app')
 const { createLocalFileStoreDir } = require('./services/utils')
 const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stream.utils')
 let { streamsObject } = require('./controllers/stream.utils')
-const { refreshIfExpiringSoonWithStatus } = require('./services/device.service')
+const { refreshIfExpiringSoonWithStatus, syncRshakeAlertCredential } = require('./services/device.service')
 const rshakeAlertsService = require('./services/rshakeAlerts.service')
 
 // Asynchronous function for:
@@ -228,7 +228,19 @@ const scheduleRefresh = async () => {
   }
 };
 
+const syncAlertCredentialOnStartup = async () => {
+  try {
+    const result = await syncRshakeAlertCredential({ allowTokenRefresh: true });
+    if (result?.str === 'success') {
+      console.log('RShake alert credential synced from Earthquake Hub.');
+    }
+  } catch (error) {
+    console.log(`Startup alert credential sync skipped: ${error?.message || error}`);
+  }
+};
+
 if (!isTestRuntime) {
+  syncAlertCredentialOnStartup();
   scheduleRefresh();
 
   const handleShutdownSignal = (signal) => {

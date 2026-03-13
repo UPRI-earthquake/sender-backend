@@ -8,8 +8,12 @@ DOCKER_NETWORK="UPRI-docker-network"
 
 SENDER_BUNDLE_TAG_DEFAULT="latest"
 SENDER_FRONTEND_IMAGE_REPO_DEFAULT="ghcr.io/upri-earthquake/sender-frontend"
+ALERT_RUNTIME_DIR_DEFAULT="/etc/upri/sender-runtime"
+ALERT_RUNTIME_ENV_FILE_DEFAULT="${ALERT_RUNTIME_DIR_DEFAULT}/alert.env"
 SENDER_BUNDLE_TAG="${SENDER_BUNDLE_TAG:-$SENDER_BUNDLE_TAG_DEFAULT}"
 SENDER_FRONTEND_IMAGE_REPO="${SENDER_FRONTEND_IMAGE_REPO:-$SENDER_FRONTEND_IMAGE_REPO_DEFAULT}"
+ALERT_RUNTIME_DIR="${ALERT_RUNTIME_DIR:-$ALERT_RUNTIME_DIR_DEFAULT}"
+ALERT_RUNTIME_ENV_FILE="${ALERT_RUNTIME_ENV_FILE:-$ALERT_RUNTIME_ENV_FILE_DEFAULT}"
 IMAGE="${SENDER_FRONTEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 
 AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert"
@@ -22,6 +26,17 @@ LAST_PULL_RESULT="unknown"
 LAST_FRONTEND_IMAGE_REF="$IMAGE"
 LAST_FRONTEND_DIGEST="unknown"
 LAST_FRONTEND_BUNDLE_VERSION="unknown"
+
+function load_alert_runtime_env() {
+    if [[ -r "$ALERT_RUNTIME_ENV_FILE" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        . "$ALERT_RUNTIME_ENV_FILE"
+        set +a
+    fi
+}
+
+load_alert_runtime_env
 
 function json_escape() {
     local value="$1"
@@ -100,7 +115,7 @@ function resolve_image_ref() {
     pull_exit=$?
     LAST_PULL_RESULT="$(classify_pull_state_from_output "$pull_output")"
     if [[ -n "$pull_output" ]]; then
-        echo "$pull_output"
+        echo "$pull_output" >&2
     fi
 
     if [[ $pull_exit -ne 0 ]]; then

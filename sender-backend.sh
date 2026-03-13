@@ -22,6 +22,10 @@ SENDER_BACKEND_IMAGE_REPO_DEFAULT="ghcr.io/upri-earthquake/sender-backend"
 SENDER_FRONTEND_IMAGE_REPO_DEFAULT="ghcr.io/upri-earthquake/sender-frontend"
 SENDER_HOST_SCRIPTS_DIR_DEFAULT="/opt/upri/host-scripts"
 CONTAINER_HOST_SCRIPTS_DIR_DEFAULT="/host-scripts"
+ALERT_RUNTIME_DIR_DEFAULT="/etc/upri/sender-runtime"
+ALERT_RUNTIME_ENV_FILE_DEFAULT="${ALERT_RUNTIME_DIR_DEFAULT}/alert.env"
+CONTAINER_ALERT_RUNTIME_DIR_DEFAULT="/opt/upri/runtime"
+CONTAINER_ALERT_RUNTIME_ENV_FILE_DEFAULT="${CONTAINER_ALERT_RUNTIME_DIR_DEFAULT}/alert.env"
 SENDER_SCRIPT_SYNC_MODE_DEFAULT="fallback"
 SENDER_SCRIPT_SYNC_TIMEOUT_SEC_DEFAULT=20
 
@@ -30,6 +34,10 @@ SENDER_BACKEND_IMAGE_REPO="${SENDER_BACKEND_IMAGE_REPO:-$SENDER_BACKEND_IMAGE_RE
 SENDER_FRONTEND_IMAGE_REPO="${SENDER_FRONTEND_IMAGE_REPO:-$SENDER_FRONTEND_IMAGE_REPO_DEFAULT}"
 SENDER_HOST_SCRIPTS_DIR="${SENDER_HOST_SCRIPTS_DIR:-$SENDER_HOST_SCRIPTS_DIR_DEFAULT}"
 CONTAINER_HOST_SCRIPTS_DIR="${CONTAINER_HOST_SCRIPTS_DIR:-$CONTAINER_HOST_SCRIPTS_DIR_DEFAULT}"
+ALERT_RUNTIME_DIR="${ALERT_RUNTIME_DIR:-$ALERT_RUNTIME_DIR_DEFAULT}"
+ALERT_RUNTIME_ENV_FILE="${ALERT_RUNTIME_ENV_FILE:-$ALERT_RUNTIME_ENV_FILE_DEFAULT}"
+CONTAINER_ALERT_RUNTIME_DIR="${CONTAINER_ALERT_RUNTIME_DIR:-$CONTAINER_ALERT_RUNTIME_DIR_DEFAULT}"
+CONTAINER_ALERT_RUNTIME_ENV_FILE="${CONTAINER_ALERT_RUNTIME_ENV_FILE:-$CONTAINER_ALERT_RUNTIME_ENV_FILE_DEFAULT}"
 SENDER_SCRIPT_SYNC_MODE="${SENDER_SCRIPT_SYNC_MODE:-$SENDER_SCRIPT_SYNC_MODE_DEFAULT}"
 SENDER_SCRIPT_SYNC_TIMEOUT_SEC="${SENDER_SCRIPT_SYNC_TIMEOUT_SEC:-$SENDER_SCRIPT_SYNC_TIMEOUT_SEC_DEFAULT}"
 
@@ -118,6 +126,17 @@ WATCHDOG_STATE_FILE_PATH="$WATCHDOG_STATE_FILE"
 REMOTE_TUNNEL_STATE_FILE_PATH="$REMOTE_TUNNEL_STATE_FILE"
 REMOTE_TUNNEL_ENABLED_VALUE="false"
 REMOTE_TUNNEL_DEVICE_ID_VALUE=""
+
+function load_alert_runtime_env() {
+    if [[ -r "$ALERT_RUNTIME_ENV_FILE" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        . "$ALERT_RUNTIME_ENV_FILE"
+        set +a
+    fi
+}
+
+load_alert_runtime_env
 REMOTE_TUNNEL_BASTION_HOST_VALUE=""
 REMOTE_TUNNEL_BASTION_PORT_VALUE=443
 REMOTE_TUNNEL_BASTION_USER_VALUE=""
@@ -2162,6 +2181,43 @@ function ensure_host_scripts_dir() {
     return 1
 }
 
+function write_alert_runtime_env_template_if_missing() {
+    local env_file="${ALERT_RUNTIME_ENV_FILE:-$ALERT_RUNTIME_ENV_FILE_DEFAULT}"
+    local env_dir
+    local tmp_file
+
+    ALERT_RUNTIME_ENV_FILE="$env_file"
+    if [[ -f "$env_file" ]]; then
+        return 0
+    fi
+
+    env_dir="$(dirname "$env_file")"
+    if ! mkdir -p "$env_dir" >/dev/null 2>&1; then
+        if ! (command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$env_dir" >/dev/null 2>&1); then
+            echo -en "[\e[1;33mWARN\e[0m] "
+            echo "Unable to create alert runtime env directory: $env_dir"
+            return 1
+        fi
+    fi
+
+    tmp_file="$(mktemp "/tmp/upri-sender-alert-env.XXXXXX")" || return 1
+    cat <<EOF > "$tmp_file"
+# Managed by sender-backend. Used for authenticated RShake alert posts.
+RSHAKE_ALERT_SHARED_SECRET=
+RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT=
+EOF
+
+    if install_data_payload "$tmp_file" "$env_file" 0600; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        return 0
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    echo -en "[\e[1;33mWARN\e[0m] "
+    echo "Unable to write alert runtime env template at $env_file."
+    return 1
+}
+
 function attempt_auto_update_rollback() {
     local backend_previous_ref="$1"
     local frontend_previous_ref="$2"
@@ -3309,6 +3365,7 @@ function create_container() {
     LAST_BACKEND_IMAGE_REF="$target_image_ref"
     LAST_BACKEND_DIGEST="${target_image_ref##*@}"
     ensure_host_scripts_dir || true
+    write_alert_runtime_env_template_if_missing || true
 
     if [[ -n "${RSHAKE_ALERTS_ENABLED:-}" ]]; then
         alert_env_flags+=(--env "RSHAKE_ALERTS_ENABLED=${RSHAKE_ALERTS_ENABLED}")
@@ -3376,6 +3433,7 @@ function create_container() {
     alert_env_flags+=(--env "SENDER_SCRIPT_SYNC_MODE=${SENDER_SCRIPT_SYNC_MODE}")
     alert_env_flags+=(--env "SENDER_SCRIPT_SYNC_TIMEOUT_SEC=${SENDER_SCRIPT_SYNC_TIMEOUT_SEC}")
     alert_env_flags+=(--env "SENDER_HOST_SCRIPTS_DIR=${CONTAINER_HOST_SCRIPTS_DIR}")
+    alert_env_flags+=(--env "RSHAKE_ALERT_RUNTIME_ENV_FILE=${CONTAINER_ALERT_RUNTIME_ENV_FILE}")
     alert_env_flags+=(--env "SENDER_BUNDLE_TAG=${SENDER_BUNDLE_TAG}")
     alert_env_flags+=(--env "SENDER_IMAGE_BUNDLE_VERSION=${LAST_BUNDLE_VERSION}")
 
@@ -3403,6 +3461,7 @@ function create_container() {
             --volume /opt/settings:/opt/settings:ro \
             --volume "$VOLUME":/app/localDBs \
             --volume "${SENDER_HOST_SCRIPTS_DIR}:${CONTAINER_HOST_SCRIPTS_DIR}" \
+            --volume "${ALERT_RUNTIME_DIR}:${CONTAINER_ALERT_RUNTIME_DIR}" \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
             --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
             "${alert_env_flags[@]}" \

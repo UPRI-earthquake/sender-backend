@@ -87,6 +87,7 @@ async function linkDevice(req, res) {
       accessToken,
       refreshToken = null,
       deviceInfo,
+      rshakeAlertCredential,
     } = payload || {};
 
     if (!accessToken) {
@@ -98,6 +99,14 @@ async function linkDevice(req, res) {
       refreshToken,
       deviceInfo,
     });
+    if (rshakeAlertCredential?.sharedSecret) {
+      await deviceService.persistAlertCredential(rshakeAlertCredential);
+    } else {
+      await deviceService.syncRshakeAlertCredential({
+        accessToken,
+        allowTokenRefresh: false,
+      });
+    }
 
     return res.status(200).json({
       status: responseCodes.DEVICE_LINKING_SUCCESS,

@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const deviceService = require('./device.service');
+const alertCredentialService = require('./alertCredential.service');
 const utils = require('./utils');
 const metricsService = require('./metrics.service');
 
@@ -302,13 +303,32 @@ function buildAlertUrl() {
 }
 
 function buildAlertHeaders() {
-  const sharedSecret = String(process.env.RSHAKE_ALERT_SHARED_SECRET || '').trim();
+  const sharedSecret = alertCredentialService.getStoredAlertSharedSecret();
   if (!sharedSecret) {
     return undefined;
   }
   return {
     'X-RShake-Alert-Secret': sharedSecret,
   };
+}
+
+async function retryAfterCredentialSync(error, alertUrl, payload) {
+  if (error?.response?.status !== 403) {
+    return null;
+  }
+
+  try {
+    const syncResult = await deviceService.syncRshakeAlertCredential({
+      allowTokenRefresh: true,
+    });
+    if (syncResult?.str !== 'success') {
+      return null;
+    }
+    return postAlertWithRetries(alertUrl, payload);
+  } catch (syncError) {
+    console.log(`RShake alert credential sync failed after 403: ${syncError?.message || syncError}`);
+    return null;
+  }
 }
 
 function sanitizeIdentifier(value) {
@@ -447,7 +467,18 @@ async function postRshakeAlert({
 
   const alertUrl = buildAlertUrl();
   try {
-    const { response } = await postAlertWithRetries(alertUrl, payload);
+    let postResult;
+    try {
+      postResult = await postAlertWithRetries(alertUrl, payload);
+    } catch (error) {
+      const retryResult = await retryAfterCredentialSync(error, alertUrl, payload);
+      if (!retryResult) {
+        throw error;
+      }
+      postResult = retryResult;
+    }
+
+    const { response } = postResult;
     await markAlertSent(resolvedDedupeKey);
     metricsService.recordAlertPost('success', { status: response.status });
     return { str: 'success', status: response.status };

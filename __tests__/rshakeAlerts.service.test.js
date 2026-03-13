@@ -1,4 +1,7 @@
 const axios = require('axios');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 jest.mock('axios', () => ({
   post: jest.fn(),
@@ -7,6 +10,7 @@ jest.mock('axios', () => ({
 jest.mock('../src/services/device.service', () => ({
   buildW1BaseUrl: jest.fn(),
   getStoredDeviceInfo: jest.fn(),
+  syncRshakeAlertCredential: jest.fn(),
 }));
 
 jest.mock('../src/services/utils', () => ({
@@ -14,23 +18,35 @@ jest.mock('../src/services/utils', () => ({
   read_mac_address: jest.fn(),
 }));
 
+jest.mock('../src/services/alertCredential.service', () => ({
+  getStoredAlertSharedSecret: jest.fn(),
+}));
+
 const deviceService = require('../src/services/device.service');
 const utils = require('../src/services/utils');
+const alertCredentialService = require('../src/services/alertCredential.service');
 const { postRshakeAlert } = require('../src/services/rshakeAlerts.service');
 
 describe('rshakeAlerts.service', () => {
   const originalEnv = process.env;
+  let tempDir;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sender-rshake-alerts-'));
     process.env = { ...originalEnv };
     delete process.env.RSHAKE_ALERTS_ENABLED;
     delete process.env.W1_RS_ALERT_PATH;
     delete process.env.RSHAKE_ALERT_POST_TIMEOUT_MS;
     delete process.env.RSHAKE_ALERT_SCHEMA_VERSION;
     delete process.env.RSHAKE_ALERT_SHARED_SECRET;
+    process.env.LOCALDBS_DIRECTORY = tempDir;
+    process.env.RSHAKE_ALERT_MIN_INTERVAL_SEC = '0';
+    process.env.RSHAKE_ALERT_COOLDOWN_STATE_FILE = path.join(tempDir, 'cooldown.json');
+    process.env.RSHAKE_ALERT_QUEUE_FILE = path.join(tempDir, 'queue.json');
 
     deviceService.buildW1BaseUrl.mockReturnValue('http://central.example:5000');
+    deviceService.syncRshakeAlertCredential.mockResolvedValue({ str: 'success' });
     deviceService.getStoredDeviceInfo.mockResolvedValue({
       network: 'am',
       station: 'abc1',
@@ -41,6 +57,11 @@ describe('rshakeAlerts.service', () => {
     });
     utils.getHostDeviceConfig.mockReturnValue({});
     utils.read_mac_address.mockReturnValue('AA:BB:CC:DD:EE:FF');
+    alertCredentialService.getStoredAlertSharedSecret.mockReturnValue('');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   afterAll(() => {
@@ -92,7 +113,7 @@ describe('rshakeAlerts.service', () => {
   });
 
   it('adds shared-secret header when configured', async () => {
-    process.env.RSHAKE_ALERT_SHARED_SECRET = 'sender-secret';
+    alertCredentialService.getStoredAlertSharedSecret.mockReturnValue('sender-secret');
     axios.post.mockResolvedValue({ status: 202 });
 
     const result = await postRshakeAlert({
@@ -109,6 +130,40 @@ describe('rshakeAlerts.service', () => {
       timeout: 5000,
       headers: {
         'X-RShake-Alert-Secret': 'sender-secret',
+      },
+    });
+  });
+
+  it('syncs the issued credential and retries once after a 403 response', async () => {
+    alertCredentialService.getStoredAlertSharedSecret
+      .mockReturnValueOnce('')
+      .mockReturnValue('rotated-secret');
+    axios.post
+      .mockRejectedValueOnce({
+        response: {
+          status: 403,
+          data: { message: 'Forbidden' },
+        },
+      })
+      .mockResolvedValueOnce({ status: 202 });
+
+    const result = await postRshakeAlert({
+      type: 'device.alert',
+      alertCode: 'STREAM_ERROR',
+      severity: 'critical',
+      status: 'Error',
+      summary: 'Retry after sync',
+    });
+
+    expect(result).toEqual({ str: 'success', status: 202 });
+    expect(deviceService.syncRshakeAlertCredential).toHaveBeenCalledWith({
+      allowTokenRefresh: true,
+    });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(axios.post.mock.calls[1][2]).toEqual({
+      timeout: 5000,
+      headers: {
+        'X-RShake-Alert-Secret': 'rotated-secret',
       },
     });
   });

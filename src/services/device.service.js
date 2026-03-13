@@ -4,6 +4,7 @@ const axios = require('axios');
 const https = require('https');
 const jwt = require('jsonwebtoken');
 const utils = require('./utils');
+const alertCredentialService = require('./alertCredential.service');
 
 const localDbPath = (fileName) => `${process.env.LOCALDBS_DIRECTORY || './localDBs'}/${fileName}`;
 const tokenPath = () => localDbPath('token.json');
@@ -37,6 +38,7 @@ const tokenLeewaySeconds = 300; // refresh tokens 5 minutes before expiry
 const refreshTokenLeewaySeconds = Number(process.env.REFRESH_TOKEN_LEEWAY_SECONDS || 24 * 60 * 60); // default 24h leeway for refresh tokens
 const RELINK_REQUIRED_ERROR_CODE = 'RELINK_REQUIRED';
 const deviceStatusPath = '/device/status';
+const alertCredentialPath = '/device/alert-credential';
 const allowInsecureW1Tls = String(process.env.W1_ALLOW_INSECURE_TLS || 'true').trim().toLowerCase() === 'true';
 const httpsAgent = new https.Agent({ rejectUnauthorized: !allowInsecureW1Tls });
 
@@ -66,6 +68,16 @@ function unwrapDeviceInfo(payload) {
     return payload.deviceInfo;
   }
   return payload;
+}
+
+function unwrapAlertCredential(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.rshakeAlertCredential && typeof payload.rshakeAlertCredential === 'object') {
+    return payload.rshakeAlertCredential;
+  }
+  return null;
 }
 
 function roundToDecimals(value, decimals = 2) {
@@ -253,6 +265,17 @@ async function persistTokenPair({ accessToken, refreshToken, deviceInfo }) {
   return tokenInfo;
 }
 
+async function persistAlertCredential(alertCredential) {
+  const sharedSecret = String(alertCredential?.sharedSecret || '').trim();
+  if (!sharedSecret) {
+    return { persisted: false };
+  }
+
+  return alertCredentialService.persistAlertSharedSecret(sharedSecret, {
+    issuedAt: alertCredential?.issuedAt || '',
+  });
+}
+
 async function getStoredDeviceInfo() {
   const stored = await readJsonFile(deviceInfoPath(), defaultDeviceInfo);
   return normalizeDeviceInfo(stored);
@@ -353,7 +376,7 @@ async function getRefreshTokenStatus() {
   }
 }
 
-async function ensureValidAccessToken() {
+async function ensureValidAccessToken({ skipAlertCredentialSync = false } = {}) {
   const tokenData = await readJsonFile(tokenPath(), createDefaultTokenInfo());
   if (tokenData?.accessToken) {
     if (!isTokenExpiring(tokenData.accessToken)) {
@@ -361,10 +384,10 @@ async function ensureValidAccessToken() {
     }
   }
 
-  return refreshAuthToken();
+  return refreshAuthToken({ skipAlertCredentialSync });
 }
 
-async function refreshAuthToken() {
+async function refreshAuthToken({ skipAlertCredentialSync = false } = {}) {
   const [tokenData, refreshTokenStatus] = await Promise.all([
     readJsonFile(tokenPath(), createDefaultTokenInfo()),
     getRefreshTokenStatus(),
@@ -392,6 +415,18 @@ async function refreshAuthToken() {
     refreshToken: payload.refreshToken || refreshToken,
     deviceInfo: payload.deviceInfo,
   });
+
+  if (!skipAlertCredentialSync) {
+    const issuedCredential = unwrapAlertCredential(payload);
+    if (issuedCredential?.sharedSecret) {
+      await persistAlertCredential(issuedCredential);
+    } else {
+      await syncRshakeAlertCredential({
+        accessToken: payload.accessToken,
+        allowTokenRefresh: false,
+      });
+    }
+  }
 
   return payload.accessToken;
 }
@@ -483,6 +518,7 @@ async function refreshIfExpiringSoonWithStatus() {
 async function clearLocalLinkState() {
   await persistTokenPair({ accessToken: null, refreshToken: null, deviceInfo: defaultDeviceInfo });
   await writeJsonFile(serversPath(), []);
+  await alertCredentialService.clearAlertSharedSecret();
 }
 
 async function getDeviceDetails() {
@@ -598,6 +634,63 @@ async function requestRefreshToken(refreshToken) {
     }
     throw error;
   }
+}
+
+async function requestAlertCredential(accessToken, identifiers = {}) {
+  const url = `${buildW1BaseUrl()}${alertCredentialPath}`;
+  const axiosConfig = {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    timeout: Number(process.env.RSHAKE_ALERT_CREDENTIAL_TIMEOUT_MS || 5000),
+  };
+
+  if (process.env.NODE_ENV === 'production') {
+    axiosConfig.httpsAgent = httpsAgent;
+  }
+
+  const response = await axios.post(url, identifiers, axiosConfig);
+  const payload = extractPayload(response.data);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('W1 alert credential response missing payload');
+  }
+  return payload;
+}
+
+async function syncRshakeAlertCredential({ accessToken = '', allowTokenRefresh = false } = {}) {
+  let resolvedAccessToken = String(accessToken || '').trim();
+  if (!resolvedAccessToken && allowTokenRefresh) {
+    resolvedAccessToken = await ensureValidAccessToken({ skipAlertCredentialSync: true });
+  }
+  if (!resolvedAccessToken) {
+    return { str: 'skipped', reason: 'missingAccessToken' };
+  }
+
+  const identifiers = await getUnlinkIdentifiers();
+  if (!identifiers.streamId && !identifiers.macAddress && !(identifiers.network && identifiers.station)) {
+    return { str: 'skipped', reason: 'missingDeviceIdentifiers' };
+  }
+
+  const payload = await requestAlertCredential(resolvedAccessToken, {
+    macAddress: identifiers.macAddress || undefined,
+    streamId: identifiers.streamId || undefined,
+    network: identifiers.network || undefined,
+    station: identifiers.station || undefined,
+  });
+
+  if (!payload.sharedSecret) {
+    return { str: 'skipped', reason: 'missingSharedSecret' };
+  }
+
+  await persistAlertCredential(payload);
+  if (payload.deviceInfo) {
+    await persistDeviceInfo(payload.deviceInfo, { overwrite: false });
+  }
+
+  return {
+    str: 'success',
+    issuedAt: payload.issuedAt || null,
+  };
 }
 
 // Function for adding the device to db in W1 and linking it to the user input account details
@@ -731,6 +824,7 @@ module.exports = {
   refreshIfExpiringSoon,
   refreshIfExpiringSoonWithStatus,
   clearLocalLinkState,
+  persistAlertCredential,
   persistDeviceInfo,
   persistToken,
   persistTokenPair,
@@ -743,6 +837,7 @@ module.exports = {
   requestLinking,
   requestUnlinking,
   requestLinkReset,
+  syncRshakeAlertCredential,
   refreshAuthToken,
   buildW1BaseUrl,
   fetchRemoteLinkState,
