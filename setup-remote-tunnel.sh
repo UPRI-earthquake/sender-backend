@@ -42,7 +42,7 @@ Options:
 
 Examples:
   sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN"
-  sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN" --enroll-endpoint "https://earthquake.science.upd.edu.ph/device/tunnel/enroll"
+  sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"
 EOF
 }
 

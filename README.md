@@ -141,7 +141,7 @@ Automatic setup helper (recommended to reduce manual steps on deployed devices):
 - `setup-remote-tunnel.sh`
 - `sender-setup-remote-tunnel` (installed by `install.sh`)
 - Example:
-  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/device/tunnel/enroll"`
+  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
 - If `--enroll-token` is omitted, the helper attempts to auto-discover an existing sender access token from current tunnel env and sender token storage.
 - The helper writes `/etc/upri/sender-remote-tunnel.env`, runs `sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`, restarts `sender-remote-tunnel.service`, and prints tunnel status.
 

@@ -47,9 +47,9 @@ Registry source of truth:
 
 Use helper script from the sender-backend repo on the device:
 
-- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/device/tunnel/enroll"`
+- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
 - If you are running from a checked-out repo instead of an installed wrapper, use:
-  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/device/tunnel/enroll"`
+  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
 - If `--enroll-token` is omitted, helper attempts to auto-discover an existing sender access token from tunnel env and sender token storage.
 
 The helper will:
