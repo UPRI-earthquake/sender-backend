@@ -8,8 +8,9 @@ AUTO_REGISTER_DEFAULT="true"
 LOCAL_HOST_DEFAULT="127.0.0.1"
 LOCAL_PORT_DEFAULT="22"
 ENROLL_TIMEOUT_DEFAULT="15"
-WSS_URL_DEFAULT="wss://earthquake.science.upd.edu.ph"
-WSS_PATH_PREFIX_DEFAULT="api/ws-tunnel/change-me"
+WSS_URL_DEFAULT=""
+WSS_PATH_PREFIX_DEFAULT=""
+WSTUNNEL_IMAGE_DEFAULT="ghcr.io/erebe/wstunnel:latest"
 
 ENV_FILE="$ENV_FILE_DEFAULT"
 SENDER_BACKEND_CMD="${SENDER_BACKEND_CMD:-$SENDER_BACKEND_CMD_DEFAULT}"
@@ -22,6 +23,7 @@ LOCAL_PORT="$LOCAL_PORT_DEFAULT"
 ENROLL_TIMEOUT="$ENROLL_TIMEOUT_DEFAULT"
 WSS_URL="${REMOTE_TUNNEL_WSS_URL:-$WSS_URL_DEFAULT}"
 WSS_PATH_PREFIX="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$WSS_PATH_PREFIX_DEFAULT}"
+WSTUNNEL_IMAGE="${REMOTE_TUNNEL_WSTUNNEL_IMAGE:-$WSTUNNEL_IMAGE_DEFAULT}"
 SKIP_RESTART="false"
 
 usage() {
@@ -36,8 +38,9 @@ Options:
   --local-host <host>               Local SSH source host (default: 127.0.0.1)
   --local-port <port>               Local SSH source port (default: 22)
   --enroll-timeout-sec <seconds>    Enrollment request timeout (default: 15)
-  --wss-url <url>                   WebSocket tunnel endpoint (default: $WSS_URL_DEFAULT)
-  --wss-path-prefix <prefix>        WS upgrade path prefix (default: $WSS_PATH_PREFIX_DEFAULT)
+  --wss-url <url>                   WebSocket tunnel endpoint override (optional)
+  --wss-path-prefix <prefix>        WS upgrade path prefix override (optional)
+  --wstunnel-image <image>          Docker image used for wstunnel auto-install (default: $WSTUNNEL_IMAGE_DEFAULT)
   --auto-register <true|false>      Enable/disable auto-registration (default: true)
   --env-file <path>                 Env file path (default: /etc/upri/sender-remote-tunnel.env)
   --sender-backend-cmd <cmd>        sender-backend command path (default: sender-backend)
@@ -51,7 +54,7 @@ Examples:
 Host package prerequisites:
   sudo apt-get update
   sudo apt-get install -y openssh-client
-  # install wstunnel binary under /usr/local/bin/wstunnel
+  # wstunnel is auto-installed when missing (requires docker access)
 EOF
 }
 
@@ -239,6 +242,10 @@ parse_args() {
                 WSS_PATH_PREFIX="${2:-}"
                 shift 2
                 ;;
+            --wstunnel-image)
+                WSTUNNEL_IMAGE="${2:-}"
+                shift 2
+                ;;
             --auto-register)
                 AUTO_REGISTER="${2:-}"
                 shift 2
@@ -280,16 +287,61 @@ parse_args() {
         echo "Invalid --enroll-timeout-sec value: $ENROLL_TIMEOUT"
         exit 1
     }
-    if [[ ! "$WSS_URL" =~ ^wss?:// ]]; then
+    if [[ -n "$WSS_URL" && ! "$WSS_URL" =~ ^wss?:// ]]; then
         echo "Invalid --wss-url value: $WSS_URL"
         exit 1
     fi
     WSS_PATH_PREFIX="${WSS_PATH_PREFIX#/}"
     WSS_PATH_PREFIX="${WSS_PATH_PREFIX%/}"
-    if [[ -z "$WSS_PATH_PREFIX" || "$WSS_PATH_PREFIX" =~ [[:space:]] ]]; then
+    if [[ -n "$WSS_PATH_PREFIX" && "$WSS_PATH_PREFIX" =~ [[:space:]] ]]; then
         echo "Invalid --wss-path-prefix value: $WSS_PATH_PREFIX"
         exit 1
     fi
+    if [[ -z "$WSTUNNEL_IMAGE" ]]; then
+        echo "Invalid --wstunnel-image value: $WSTUNNEL_IMAGE"
+        exit 1
+    fi
+}
+
+install_wstunnel_from_docker_image() {
+    local container_id=""
+    local tmp_bin=""
+
+    command -v docker >/dev/null 2>&1 || return 1
+
+    container_id="$(docker create "$WSTUNNEL_IMAGE" 2>/dev/null)" || return 1
+    tmp_bin="$(mktemp "/tmp/upri-wstunnel-bin.XXXXXX")" || {
+        docker rm -f "$container_id" >/dev/null 2>&1 || true
+        return 1
+    }
+
+    if ! docker cp "${container_id}:/home/app/wstunnel" "$tmp_bin" >/dev/null 2>&1; then
+        rm -f "$tmp_bin" >/dev/null 2>&1 || true
+        docker rm -f "$container_id" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    docker rm -f "$container_id" >/dev/null 2>&1 || true
+    if ! install -m 0755 "$tmp_bin" /usr/local/bin/wstunnel; then
+        rm -f "$tmp_bin" >/dev/null 2>&1 || true
+        return 1
+    fi
+    rm -f "$tmp_bin" >/dev/null 2>&1 || true
+    return 0
+}
+
+ensure_wstunnel_installed() {
+    if command -v wstunnel >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "wstunnel not found; attempting auto-install from $WSTUNNEL_IMAGE ..."
+    if install_wstunnel_from_docker_image; then
+        echo "Installed wstunnel to /usr/local/bin/wstunnel."
+        return 0
+    fi
+
+    return 1
 }
 
 validate_requirements() {
@@ -305,7 +357,7 @@ validate_requirements() {
         exit 1
     fi
 
-    if ! command -v wstunnel >/dev/null 2>&1; then
+    if ! ensure_wstunnel_installed; then
         missing_commands+=("wstunnel")
     fi
     if ! command -v ssh-keygen >/dev/null 2>&1; then

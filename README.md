@@ -143,9 +143,10 @@ Automatic setup helper (recommended to reduce manual steps on deployed devices):
 - Host package prerequisites:
   - `sudo apt-get update`
   - `sudo apt-get install -y openssh-client`
-  - install `wstunnel` under `/usr/local/bin/wstunnel`
+  - `wstunnel` auto-install is attempted from `ghcr.io/erebe/wstunnel:latest` when missing
 - Example:
-  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll" --wss-url "wss://earthquake.science.upd.edu.ph" --wss-path-prefix "api/ws-tunnel/<secret>"`
+  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
+  - optional overrides: `--wss-url ... --wss-path-prefix ...`
 - If `--enroll-token` is omitted, the helper attempts to auto-discover an existing sender access token from current tunnel env and sender token storage.
 - The helper writes `/etc/upri/sender-remote-tunnel.env`, runs `sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`, restarts `sender-remote-tunnel.service`, and prints tunnel status.
 

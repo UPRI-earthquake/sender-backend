@@ -52,10 +52,11 @@ Use helper script from the sender-backend repo on the device:
 - Ensure host packages are installed first:
   - `sudo apt-get update`
   - `sudo apt-get install -y openssh-client`
-  - install `wstunnel` under `/usr/local/bin/wstunnel`
-- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll" --wss-url "wss://earthquake.science.upd.edu.ph" --wss-path-prefix "api/ws-tunnel/<secret>"`
+  - `wstunnel` auto-install is attempted from `ghcr.io/erebe/wstunnel:latest` when missing
+- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
+  - optional overrides: `--wss-url ... --wss-path-prefix ...`
 - If you are running from a checked-out repo instead of an installed wrapper, use:
-  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll" --wss-url "wss://earthquake.science.upd.edu.ph" --wss-path-prefix "api/ws-tunnel/<secret>"`
+  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
 - If `--enroll-token` is omitted, helper attempts to auto-discover an existing sender access token from tunnel env and sender token storage.
 
 The helper will:
