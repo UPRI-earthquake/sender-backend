@@ -11,6 +11,7 @@ ENROLL_TIMEOUT_DEFAULT="15"
 WSS_URL_DEFAULT=""
 WSS_PATH_PREFIX_DEFAULT=""
 WSTUNNEL_IMAGE_DEFAULT="ghcr.io/erebe/wstunnel:latest"
+WSTUNNEL_VERSION_DEFAULT="10.5.2"
 
 ENV_FILE="$ENV_FILE_DEFAULT"
 SENDER_BACKEND_CMD="${SENDER_BACKEND_CMD:-$SENDER_BACKEND_CMD_DEFAULT}"
@@ -24,6 +25,7 @@ ENROLL_TIMEOUT="$ENROLL_TIMEOUT_DEFAULT"
 WSS_URL="${REMOTE_TUNNEL_WSS_URL:-$WSS_URL_DEFAULT}"
 WSS_PATH_PREFIX="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$WSS_PATH_PREFIX_DEFAULT}"
 WSTUNNEL_IMAGE="${REMOTE_TUNNEL_WSTUNNEL_IMAGE:-$WSTUNNEL_IMAGE_DEFAULT}"
+WSTUNNEL_VERSION="${REMOTE_TUNNEL_WSTUNNEL_VERSION:-$WSTUNNEL_VERSION_DEFAULT}"
 SKIP_RESTART="false"
 
 usage() {
@@ -41,6 +43,7 @@ Options:
   --wss-url <url>                   WebSocket tunnel endpoint override (optional)
   --wss-path-prefix <prefix>        WS upgrade path prefix override (optional)
   --wstunnel-image <image>          Docker image used for wstunnel auto-install (default: $WSTUNNEL_IMAGE_DEFAULT)
+  --wstunnel-version <version>      Release version fallback (default: $WSTUNNEL_VERSION_DEFAULT)
   --auto-register <true|false>      Enable/disable auto-registration (default: true)
   --env-file <path>                 Env file path (default: /etc/upri/sender-remote-tunnel.env)
   --sender-backend-cmd <cmd>        sender-backend command path (default: sender-backend)
@@ -246,6 +249,10 @@ parse_args() {
                 WSTUNNEL_IMAGE="${2:-}"
                 shift 2
                 ;;
+            --wstunnel-version)
+                WSTUNNEL_VERSION="${2:-}"
+                shift 2
+                ;;
             --auto-register)
                 AUTO_REGISTER="${2:-}"
                 shift 2
@@ -301,6 +308,39 @@ parse_args() {
         echo "Invalid --wstunnel-image value: $WSTUNNEL_IMAGE"
         exit 1
     fi
+    if [[ -z "$WSTUNNEL_VERSION" ]]; then
+        echo "Invalid --wstunnel-version value: $WSTUNNEL_VERSION"
+        exit 1
+    fi
+}
+
+resolve_wstunnel_release_arch() {
+    local machine_arch="$1"
+    case "$machine_arch" in
+        x86_64|amd64)
+            printf "amd64"
+            return 0
+            ;;
+        aarch64|arm64)
+            printf "arm64"
+            return 0
+            ;;
+        armv7l|armv7*)
+            printf "armv7"
+            return 0
+            ;;
+        armv6l|armv6*)
+            printf "armv6"
+            return 0
+            ;;
+        i386|i686)
+            printf "386"
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 install_wstunnel_from_docker_image() {
@@ -309,7 +349,7 @@ install_wstunnel_from_docker_image() {
 
     command -v docker >/dev/null 2>&1 || return 1
 
-    container_id="$(docker create "$WSTUNNEL_IMAGE" 2>/dev/null)" || return 1
+    container_id="$(docker create "$WSTUNNEL_IMAGE")" || return 1
     tmp_bin="$(mktemp "/tmp/upri-wstunnel-bin.XXXXXX")" || {
         docker rm -f "$container_id" >/dev/null 2>&1 || true
         return 1
@@ -330,13 +370,69 @@ install_wstunnel_from_docker_image() {
     return 0
 }
 
+install_wstunnel_from_release() {
+    local version=""
+    local machine_arch=""
+    local release_arch=""
+    local asset_name=""
+    local release_url=""
+    local tmp_dir=""
+    local tmp_tar=""
+    local extracted_bin=""
+
+    machine_arch="$(uname -m 2>/dev/null || true)"
+    release_arch="$(resolve_wstunnel_release_arch "$machine_arch" || true)"
+    [[ -n "$release_arch" ]] || return 1
+
+    version="${WSTUNNEL_VERSION#v}"
+    asset_name="wstunnel_${version}_linux_${release_arch}.tar.gz"
+    release_url="https://github.com/erebe/wstunnel/releases/download/v${version}/${asset_name}"
+
+    tmp_dir="$(mktemp -d /tmp/upri-wstunnel-release.XXXXXX)" || return 1
+    tmp_tar="${tmp_dir}/${asset_name}"
+
+    if ! curl -fsSL "$release_url" -o "$tmp_tar"; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    if ! tar -xzf "$tmp_tar" -C "$tmp_dir"; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    extracted_bin="$(find "$tmp_dir" -type f -name wstunnel | head -n 1)"
+    if [[ -z "$extracted_bin" || ! -f "$extracted_bin" ]]; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    if ! install -m 0755 "$extracted_bin" /usr/local/bin/wstunnel; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+    return 0
+}
+
 ensure_wstunnel_installed() {
     if command -v wstunnel >/dev/null 2>&1; then
         return 0
     fi
 
-    echo "wstunnel not found; attempting auto-install from $WSTUNNEL_IMAGE ..."
-    if install_wstunnel_from_docker_image; then
+    if command -v docker >/dev/null 2>&1; then
+        echo "wstunnel not found; attempting auto-install from $WSTUNNEL_IMAGE ..."
+        if install_wstunnel_from_docker_image; then
+            echo "Installed wstunnel to /usr/local/bin/wstunnel."
+            return 0
+        fi
+        echo "wstunnel image install failed; falling back to release binary v${WSTUNNEL_VERSION#v} ..."
+    else
+        echo "Docker not available; installing wstunnel from release binary v${WSTUNNEL_VERSION#v} ..."
+    fi
+
+    if install_wstunnel_from_release; then
         echo "Installed wstunnel to /usr/local/bin/wstunnel."
         return 0
     fi

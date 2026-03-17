@@ -20,6 +20,8 @@ WSTUNNEL_IMAGE_DEFAULT="ghcr.io/erebe/wstunnel:latest"
 WSTUNNEL_IMAGE="${SENDER_INSTALL_WSTUNNEL_IMAGE:-$WSTUNNEL_IMAGE_DEFAULT}"
 WSTUNNEL_BINARY_PATH_DEFAULT="/usr/local/bin/wstunnel"
 WSTUNNEL_BINARY_PATH="${SENDER_INSTALL_WSTUNNEL_BINARY_PATH:-$WSTUNNEL_BINARY_PATH_DEFAULT}"
+WSTUNNEL_VERSION_DEFAULT="10.5.2"
+WSTUNNEL_VERSION="${SENDER_INSTALL_WSTUNNEL_VERSION:-$WSTUNNEL_VERSION_DEFAULT}"
 
 print_usage() {
     cat <<EOF
@@ -38,6 +40,7 @@ Environment overrides:
   SENDER_INSTALL_START_RETRY_DELAY_SEC
   SENDER_INSTALL_WSTUNNEL_IMAGE
   SENDER_INSTALL_WSTUNNEL_BINARY_PATH
+  SENDER_INSTALL_WSTUNNEL_VERSION
 EOF
 }
 
@@ -138,7 +141,7 @@ install_wstunnel_binary_from_image() {
     local container_id=""
     local tmp_file=""
 
-    container_id="$(docker create "$WSTUNNEL_IMAGE" 2>/dev/null)" || {
+    container_id="$(docker create "$WSTUNNEL_IMAGE")" || {
         echo -en "[\e[1;31mFAILED\e[0m] "
         echo "Failed to create container from $WSTUNNEL_IMAGE for wstunnel install."
         return 1
@@ -180,6 +183,101 @@ install_wstunnel_binary_from_image() {
     return 0
 }
 
+resolve_wstunnel_release_arch() {
+    local machine_arch="$1"
+    case "$machine_arch" in
+        x86_64|amd64)
+            printf "amd64"
+            return 0
+            ;;
+        aarch64|arm64)
+            printf "arm64"
+            return 0
+            ;;
+        armv7l|armv7*)
+            printf "armv7"
+            return 0
+            ;;
+        armv6l|armv6*)
+            printf "armv6"
+            return 0
+            ;;
+        i386|i686)
+            printf "386"
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_wstunnel_binary_from_release() {
+    local release_arch=""
+    local machine_arch=""
+    local version=""
+    local asset_name=""
+    local release_url=""
+    local tmp_dir=""
+    local tmp_tar=""
+    local extracted_bin=""
+
+    machine_arch="$(uname -m 2>/dev/null || true)"
+    release_arch="$(resolve_wstunnel_release_arch "$machine_arch" || true)"
+    if [[ -z "$release_arch" ]]; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Unsupported architecture for release fallback: ${machine_arch:-unknown}"
+        return 1
+    fi
+
+    version="${WSTUNNEL_VERSION#v}"
+    asset_name="wstunnel_${version}_linux_${release_arch}.tar.gz"
+    release_url="https://github.com/erebe/wstunnel/releases/download/v${version}/${asset_name}"
+
+    tmp_dir="$(mktemp -d /tmp/upri-wstunnel-release.XXXXXX)" || return 1
+    tmp_tar="${tmp_dir}/${asset_name}"
+
+    if ! curl -fsSL "$release_url" -o "$tmp_tar"; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to download wstunnel release asset: $release_url"
+        return 1
+    fi
+
+    if ! tar -xzf "$tmp_tar" -C "$tmp_dir"; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to extract wstunnel release asset: $asset_name"
+        return 1
+    fi
+
+    extracted_bin="$(find "$tmp_dir" -type f -name wstunnel | head -n 1)"
+    if [[ -z "$extracted_bin" || ! -f "$extracted_bin" ]]; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Extracted release does not contain wstunnel binary."
+        return 1
+    fi
+
+    if ! sudo install -m 0755 "$extracted_bin" "$WSTUNNEL_BINARY_PATH"; then
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to install wstunnel to $WSTUNNEL_BINARY_PATH."
+        return 1
+    fi
+
+    rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+    if ! "$WSTUNNEL_BINARY_PATH" --version >/dev/null 2>&1; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "wstunnel installed from release but version check failed."
+        return 1
+    fi
+
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "Installed wstunnel at $WSTUNNEL_BINARY_PATH from GitHub release v${version}."
+    return 0
+}
+
 ensure_wstunnel_installed() {
     local current_wstunnel
     current_wstunnel="$(command -v wstunnel 2>/dev/null || true)"
@@ -190,13 +288,15 @@ ensure_wstunnel_installed() {
         return 0
     fi
 
-    if ! command -v docker >/dev/null 2>&1; then
-        echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "Docker is required to auto-install wstunnel."
-        return 1
+    if command -v docker >/dev/null 2>&1; then
+        if install_wstunnel_binary_from_image; then
+            return 0
+        fi
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Falling back to GitHub release install for wstunnel."
     fi
 
-    install_wstunnel_binary_from_image
+    install_wstunnel_binary_from_release
 }
 
 reboot_prompt_on_failure() {
