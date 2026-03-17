@@ -16,6 +16,10 @@ START_RETRY_COUNT_DEFAULT=3
 START_RETRY_DELAY_SEC_DEFAULT=4
 START_RETRY_COUNT="${SENDER_INSTALL_START_RETRY_COUNT:-$START_RETRY_COUNT_DEFAULT}"
 START_RETRY_DELAY_SEC="${SENDER_INSTALL_START_RETRY_DELAY_SEC:-$START_RETRY_DELAY_SEC_DEFAULT}"
+WSTUNNEL_IMAGE_DEFAULT="ghcr.io/erebe/wstunnel:latest"
+WSTUNNEL_IMAGE="${SENDER_INSTALL_WSTUNNEL_IMAGE:-$WSTUNNEL_IMAGE_DEFAULT}"
+WSTUNNEL_BINARY_PATH_DEFAULT="/usr/local/bin/wstunnel"
+WSTUNNEL_BINARY_PATH="${SENDER_INSTALL_WSTUNNEL_BINARY_PATH:-$WSTUNNEL_BINARY_PATH_DEFAULT}"
 
 print_usage() {
     cat <<EOF
@@ -32,6 +36,8 @@ Environment overrides:
   SENDER_INSTALL_REBOOT_POLICY
   SENDER_INSTALL_START_RETRY_COUNT
   SENDER_INSTALL_START_RETRY_DELAY_SEC
+  SENDER_INSTALL_WSTUNNEL_IMAGE
+  SENDER_INSTALL_WSTUNNEL_BINARY_PATH
 EOF
 }
 
@@ -126,6 +132,71 @@ WRAP
     echo -en "[  \e[32mOK\e[0m  ] "
     echo "Installed wrapper $wrapper_path -> $delegate_path"
     return 0
+}
+
+install_wstunnel_binary_from_image() {
+    local container_id=""
+    local tmp_file=""
+
+    container_id="$(docker create "$WSTUNNEL_IMAGE" 2>/dev/null)" || {
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to create container from $WSTUNNEL_IMAGE for wstunnel install."
+        return 1
+    }
+
+    tmp_file="$(mktemp /tmp/upri-wstunnel.XXXXXX)" || {
+        docker rm -f "$container_id" >/dev/null 2>&1 || true
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to allocate temp file for wstunnel install."
+        return 1
+    }
+
+    if ! docker cp "${container_id}:/home/app/wstunnel" "$tmp_file" >/dev/null 2>&1; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        docker rm -f "$container_id" >/dev/null 2>&1 || true
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to extract /home/app/wstunnel from $WSTUNNEL_IMAGE."
+        return 1
+    fi
+
+    docker rm -f "$container_id" >/dev/null 2>&1 || true
+
+    if ! sudo install -m 0755 "$tmp_file" "$WSTUNNEL_BINARY_PATH"; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Failed to install wstunnel to $WSTUNNEL_BINARY_PATH."
+        return 1
+    fi
+
+    rm -f "$tmp_file" >/dev/null 2>&1
+    if ! "$WSTUNNEL_BINARY_PATH" --version >/dev/null 2>&1; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "wstunnel installed but version check failed at $WSTUNNEL_BINARY_PATH."
+        return 1
+    fi
+
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "Installed wstunnel at $WSTUNNEL_BINARY_PATH from $WSTUNNEL_IMAGE."
+    return 0
+}
+
+ensure_wstunnel_installed() {
+    local current_wstunnel
+    current_wstunnel="$(command -v wstunnel 2>/dev/null || true)"
+
+    if [[ -n "$current_wstunnel" ]] && "$current_wstunnel" --version >/dev/null 2>&1; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "wstunnel already installed at $current_wstunnel."
+        return 0
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -en "[\e[1;31mFAILED\e[0m] "
+        echo "Docker is required to auto-install wstunnel."
+        return 1
+    fi
+
+    install_wstunnel_binary_from_image
 }
 
 reboot_prompt_on_failure() {
@@ -235,9 +306,18 @@ main() {
 
     sender-backend NETWORK_SETUP    && \
     sender-backend PULL             && \
-    sender-backend CREATE           && \
-    sudo sender-backend INSTALL_SERVICE  || {
-        echo "Error in sender-backend container download & service installation. Aborting."
+    sender-backend CREATE           || {
+        echo "Error in sender-backend container download/create. Aborting."
+        exit 1
+    }
+
+    ensure_wstunnel_installed || {
+        echo "Failed to install wstunnel prerequisite. Aborting."
+        exit 1
+    }
+
+    sudo sender-backend INSTALL_SERVICE || {
+        echo "Error in sender-backend service installation. Aborting."
         exit 1
     }
 
