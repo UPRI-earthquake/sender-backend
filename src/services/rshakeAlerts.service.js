@@ -358,6 +358,29 @@ function normalizeNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function buildStreamIdFromFields(network, station) {
+  if (!network || !station) {
+    return '';
+  }
+  return `${network}_${station}_.*/MSEED`;
+}
+
+function resolvePreferredDeviceIdentity(storedInfo = {}, hostConfig = {}) {
+  const hostNetwork = normalizeString(hostConfig?.network, { uppercase: true });
+  const hostStation = normalizeString(hostConfig?.station, { uppercase: true });
+  const hostStreamId = normalizeString(hostConfig?.streamId || buildStreamIdFromFields(hostConfig?.network, hostConfig?.station));
+
+  const storedNetwork = normalizeString(storedInfo?.network, { uppercase: true });
+  const storedStation = normalizeString(storedInfo?.station, { uppercase: true });
+  const storedStreamId = normalizeString(storedInfo?.streamId || buildStreamIdFromFields(storedInfo?.network, storedInfo?.station));
+
+  return {
+    network: hostNetwork || storedNetwork,
+    station: hostStation || storedStation,
+    streamId: hostStreamId || storedStreamId,
+  };
+}
+
 function compactObject(objectValue = {}) {
   const compacted = {};
   Object.keys(objectValue).forEach((key) => {
@@ -374,11 +397,12 @@ async function buildDeviceEnvelope() {
   const storedInfo = await deviceService.getStoredDeviceInfo();
   const hostConfig = utils.getHostDeviceConfig() || {};
   const macAddress = normalizeString(utils.read_mac_address());
+  const identity = resolvePreferredDeviceIdentity(storedInfo, hostConfig);
 
   const device = compactObject({
-    network: normalizeString(storedInfo?.network || hostConfig?.network, { uppercase: true }),
-    station: normalizeString(storedInfo?.station || hostConfig?.station, { uppercase: true }),
-    streamId: normalizeString(storedInfo?.streamId || hostConfig?.streamId),
+    network: identity.network,
+    station: identity.station,
+    streamId: identity.streamId,
     macAddress,
   });
 

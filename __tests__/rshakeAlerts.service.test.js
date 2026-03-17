@@ -112,6 +112,40 @@ describe('rshakeAlerts.service', () => {
     expect(payload.occurredAt).toEqual(expect.any(String));
   });
 
+  it('prefers host identity when station id changed on the device', async () => {
+    axios.post.mockResolvedValue({ status: 202 });
+    deviceService.getStoredDeviceInfo.mockResolvedValue({
+      network: 'am',
+      station: 'r690a',
+      streamId: 'AM_R690A_.*/MSEED',
+      latitude: 14.6,
+      longitude: 121.04,
+      elevation: 35.5,
+    });
+    utils.getHostDeviceConfig.mockReturnValue({
+      network: 'AM',
+      station: 'S690A',
+      streamId: 'AM_S690A_.*/MSEED',
+    });
+
+    const result = await postRshakeAlert({
+      type: 'device.alert',
+      alertCode: 'STREAM_ERROR',
+      severity: 'critical',
+      status: 'Error',
+      summary: 'Station id changed',
+    });
+
+    expect(result).toEqual({ str: 'success', status: 202 });
+    const [, payload] = axios.post.mock.calls[0];
+    expect(payload.device).toMatchObject({
+      network: 'AM',
+      station: 'S690A',
+      streamId: 'AM_S690A_.*/MSEED',
+      macAddress: 'AA:BB:CC:DD:EE:FF',
+    });
+  });
+
   it('adds shared-secret header when configured', async () => {
     alertCredentialService.getStoredAlertSharedSecret.mockReturnValue('sender-secret');
     axios.post.mockResolvedValue({ status: 202 });

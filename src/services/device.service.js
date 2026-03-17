@@ -210,6 +210,69 @@ function formatCoordinate(value) {
   return String(rounded);
 }
 
+function buildStreamIdFromFields(network, station) {
+  if (!network || !station) {
+    return null;
+  }
+  return `${network}_${station}_.*/MSEED`;
+}
+
+function normalizeIdentityCandidate(candidate = {}) {
+  const network = typeof candidate.network === 'string' ? candidate.network.trim() : candidate.network;
+  const station = typeof candidate.station === 'string' ? candidate.station.trim() : candidate.station;
+  const streamId = typeof candidate.streamId === 'string' ? candidate.streamId.trim() : candidate.streamId;
+
+  return {
+    source: candidate.source || 'unknown',
+    network: network || null,
+    station: station || null,
+    streamId: streamId || null,
+  };
+}
+
+function buildIdentityCandidates(storedInfo = {}, hostConfig = {}) {
+  const candidates = [
+    normalizeIdentityCandidate({
+      source: 'host',
+      network: hostConfig?.network,
+      station: hostConfig?.station,
+      streamId: hostConfig?.streamId || buildStreamIdFromFields(hostConfig?.network, hostConfig?.station),
+    }),
+    normalizeIdentityCandidate({
+      source: 'stored',
+      network: storedInfo?.network,
+      station: storedInfo?.station,
+      streamId: storedInfo?.streamId || buildStreamIdFromFields(storedInfo?.network, storedInfo?.station),
+    }),
+  ].filter((candidate) => candidate.streamId || (candidate.network && candidate.station));
+
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.network || ''}|${candidate.station || ''}|${candidate.streamId || ''}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+async function resolveRemoteLinkState(identityCandidates = []) {
+  for (const candidate of identityCandidates) {
+    if (!candidate?.network || !candidate?.station) {
+      continue;
+    }
+
+    const { state } = await fetchRemoteLinkState(candidate.network, candidate.station);
+    if (state === 'notLinked') {
+      continue;
+    }
+    return state;
+  }
+
+  return 'unknown';
+}
+
 async function persistDeviceInfo(deviceInfo, { overwrite = false } = {}) {
   const flattened = unwrapDeviceInfo(deviceInfo);
   if (!flattened || typeof flattened !== 'object') {
@@ -527,24 +590,23 @@ async function getDeviceDetails() {
   const token = await readJsonFile(tokenPath(), createDefaultTokenInfo());
   const tokenStatus = await getAccessTokenStatus();
   const refreshTokenStatus = await getRefreshTokenStatus();
+  const identityCandidates = buildIdentityCandidates(storedInfo, hostConfig);
+  const preferredIdentity = identityCandidates[0] || {};
 
   const mergedDevice = {
-    network: storedInfo.network || hostConfig.network,
-    station: storedInfo.station || hostConfig.station,
+    network: preferredIdentity.network || storedInfo.network || hostConfig?.network || null,
+    station: preferredIdentity.station || storedInfo.station || hostConfig?.station || null,
     longitude: storedInfo.longitude ?? hostConfig.longitude,
     latitude: storedInfo.latitude ?? hostConfig.latitude,
     elevation: storedInfo.elevation ?? hostConfig.elevation,
-    streamId: storedInfo.streamId || hostConfig.streamId,
+    streamId: preferredIdentity.streamId || storedInfo.streamId || hostConfig?.streamId || null,
   };
 
   let linkState = 'unknown';
-  if (mergedDevice.network && mergedDevice.station) {
-    try {
-      const { state } = await fetchRemoteLinkState(mergedDevice.network, mergedDevice.station);
-      linkState = state;
-    } catch (error) {
-      console.log(`Remote link state lookup failed: ${error}`);
-    }
+  try {
+    linkState = await resolveRemoteLinkState(identityCandidates);
+  } catch (error) {
+    console.log(`Remote link state lookup failed: ${error}`);
   }
 
   return {
@@ -590,9 +652,7 @@ async function getUnlinkIdentifiers() {
   const storedInfo = await getStoredDeviceInfo();
   const hostConfig = normalizeHostConfig(utils.getHostDeviceConfig());
 
-  const streamIdFromStoredFields = (storedInfo.network && storedInfo.station)
-    ? `${storedInfo.network}_${storedInfo.station}_.*/MSEED`
-    : null;
+  const streamIdFromStoredFields = buildStreamIdFromFields(storedInfo.network, storedInfo.station);
 
   const streamId = storedInfo.streamId
     || streamIdFromStoredFields
