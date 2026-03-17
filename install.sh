@@ -10,7 +10,7 @@ HOST_SCRIPTS_DIR="${SENDER_HOST_SCRIPTS_DIR:-/opt/upri/host-scripts}"
 BACKEND_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/sender-backend"
 FRONTEND_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/sender-frontend"
 TUNNEL_SETUP_PAYLOAD_PATH="${HOST_SCRIPTS_DIR}/setup-remote-tunnel"
-REBOOT_POLICY_DEFAULT="on-failure"
+REBOOT_POLICY_DEFAULT="always"
 REBOOT_POLICY="${SENDER_INSTALL_REBOOT_POLICY:-$REBOOT_POLICY_DEFAULT}"
 START_RETRY_COUNT_DEFAULT=3
 START_RETRY_DELAY_SEC_DEFAULT=4
@@ -26,7 +26,7 @@ print_usage() {
 Usage: install.sh [--reboot-policy never|on-failure|always]
 
 Options:
-  --reboot-policy <value>  Reboot behavior after installation (default: on-failure)
+  --reboot-policy <value>  Reboot behavior after installation (default: always)
                            never      : never reboot
                            on-failure : prompt reboot only if service/container startup fails
                            always     : reboot after successful install
