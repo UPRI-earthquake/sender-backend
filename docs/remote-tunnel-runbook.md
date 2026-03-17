@@ -1,6 +1,6 @@
-# Sender Remote Tunnel Runbook (Reverse SSH via Bastion)
+# Sender Remote Tunnel Runbook (SSH over WebSocket)
 
-This runbook covers remote access for deployed RShake devices using reverse SSH (`autossh`) and per-device bastion users.
+This runbook covers remote access for deployed RShake devices using reverse SSH-over-WebSocket (`wstunnel`) and per-device remote port mappings.
 
 ## 1. Bastion setup and registry ownership
 
@@ -23,7 +23,9 @@ Registry source of truth:
 2. On device, install tunnel service:
    - `sudo sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`
 3. Write `/etc/upri/sender-remote-tunnel.env` manually with the returned values.
-4. Ensure key + known_hosts files exist and are secure.
+4. Set the WebSocket transport settings:
+   - `REMOTE_TUNNEL_WSS_URL=wss://earthquake.science.upd.edu.ph`
+   - `REMOTE_TUNNEL_WSS_PATH_PREFIX=api/ws-tunnel/<secret>`
 5. Start service:
    - `sudo systemctl restart sender-remote-tunnel.service`
 
@@ -40,16 +42,20 @@ Registry source of truth:
    - generate/load tunnel keypair,
    - call enrollment API,
    - write/update `/etc/upri/sender-remote-tunnel.env`,
-   - write pinned known_hosts data,
+   - persist received WebSocket settings (`REMOTE_TUNNEL_WSS_URL`, `REMOTE_TUNNEL_WSS_PATH_PREFIX`) when present,
    - start tunnel.
 
 ### Automatic helper script (reduced manual setup)
 
 Use helper script from the sender-backend repo on the device:
 
-- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
+- Ensure host packages are installed first:
+  - `sudo apt-get update`
+  - `sudo apt-get install -y openssh-client`
+  - install `wstunnel` under `/usr/local/bin/wstunnel`
+- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll" --wss-url "wss://earthquake.science.upd.edu.ph" --wss-path-prefix "api/ws-tunnel/<secret>"`
 - If you are running from a checked-out repo instead of an installed wrapper, use:
-  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
+  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll" --wss-url "wss://earthquake.science.upd.edu.ph" --wss-path-prefix "api/ws-tunnel/<secret>"`
 - If `--enroll-token` is omitted, helper attempts to auto-discover an existing sender access token from tunnel env and sender token storage.
 
 The helper will:
@@ -91,11 +97,9 @@ The helper will:
 
 ## 7. Common failure recovery
 
-- Host key mismatch:
-  - update pinned key in `REMOTE_TUNNEL_KNOWN_HOSTS_PATH`.
 - Private key permission error:
   - ensure key is `600`/`400` and owned by service user.
 - Enrollment API failure:
   - check `REMOTE_TUNNEL_ENROLL_TOKEN` and endpoint reachability.
-- Service running but no bastion listener:
-  - verify outbound network and bastion `sshd` logs.
+- Service running but no remote listener:
+  - verify outbound HTTPS reachability and `wstunnel` logs (`journalctl -u sender-remote-tunnel.service -n 100 --no-pager`).

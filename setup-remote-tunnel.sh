@@ -8,6 +8,8 @@ AUTO_REGISTER_DEFAULT="true"
 LOCAL_HOST_DEFAULT="127.0.0.1"
 LOCAL_PORT_DEFAULT="22"
 ENROLL_TIMEOUT_DEFAULT="15"
+WSS_URL_DEFAULT="wss://earthquake.science.upd.edu.ph"
+WSS_PATH_PREFIX_DEFAULT="api/ws-tunnel/change-me"
 
 ENV_FILE="$ENV_FILE_DEFAULT"
 SENDER_BACKEND_CMD="${SENDER_BACKEND_CMD:-$SENDER_BACKEND_CMD_DEFAULT}"
@@ -18,7 +20,8 @@ DEVICE_ID="${REMOTE_TUNNEL_DEVICE_ID:-}"
 LOCAL_HOST="$LOCAL_HOST_DEFAULT"
 LOCAL_PORT="$LOCAL_PORT_DEFAULT"
 ENROLL_TIMEOUT="$ENROLL_TIMEOUT_DEFAULT"
-BASTION_HOST_KEY="${REMOTE_TUNNEL_BASTION_HOST_KEY:-}"
+WSS_URL="${REMOTE_TUNNEL_WSS_URL:-$WSS_URL_DEFAULT}"
+WSS_PATH_PREFIX="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$WSS_PATH_PREFIX_DEFAULT}"
 SKIP_RESTART="false"
 
 usage() {
@@ -33,7 +36,8 @@ Options:
   --local-host <host>               Local SSH source host (default: 127.0.0.1)
   --local-port <port>               Local SSH source port (default: 22)
   --enroll-timeout-sec <seconds>    Enrollment request timeout (default: 15)
-  --bastion-host-key <known_hosts>  Optional bastion host key pin line
+  --wss-url <url>                   WebSocket tunnel endpoint (default: $WSS_URL_DEFAULT)
+  --wss-path-prefix <prefix>        WS upgrade path prefix (default: $WSS_PATH_PREFIX_DEFAULT)
   --auto-register <true|false>      Enable/disable auto-registration (default: true)
   --env-file <path>                 Env file path (default: /etc/upri/sender-remote-tunnel.env)
   --sender-backend-cmd <cmd>        sender-backend command path (default: sender-backend)
@@ -43,6 +47,11 @@ Options:
 Examples:
   sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN"
   sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"
+
+Host package prerequisites:
+  sudo apt-get update
+  sudo apt-get install -y openssh-client
+  # install wstunnel binary under /usr/local/bin/wstunnel
 EOF
 }
 
@@ -222,8 +231,12 @@ parse_args() {
                 ENROLL_TIMEOUT="${2:-}"
                 shift 2
                 ;;
-            --bastion-host-key)
-                BASTION_HOST_KEY="${2:-}"
+            --wss-url)
+                WSS_URL="${2:-}"
+                shift 2
+                ;;
+            --wss-path-prefix)
+                WSS_PATH_PREFIX="${2:-}"
                 shift 2
                 ;;
             --auto-register)
@@ -267,9 +280,21 @@ parse_args() {
         echo "Invalid --enroll-timeout-sec value: $ENROLL_TIMEOUT"
         exit 1
     }
+    if [[ ! "$WSS_URL" =~ ^wss?:// ]]; then
+        echo "Invalid --wss-url value: $WSS_URL"
+        exit 1
+    fi
+    WSS_PATH_PREFIX="${WSS_PATH_PREFIX#/}"
+    WSS_PATH_PREFIX="${WSS_PATH_PREFIX%/}"
+    if [[ -z "$WSS_PATH_PREFIX" || "$WSS_PATH_PREFIX" =~ [[:space:]] ]]; then
+        echo "Invalid --wss-path-prefix value: $WSS_PATH_PREFIX"
+        exit 1
+    fi
 }
 
 validate_requirements() {
+    local missing_commands=()
+
     if [[ "$(id -u)" -ne 0 ]]; then
         echo "Run as root (use sudo)."
         exit 1
@@ -277,6 +302,21 @@ validate_requirements() {
 
     if ! command -v "$SENDER_BACKEND_CMD" >/dev/null 2>&1; then
         echo "Unable to find sender-backend command: $SENDER_BACKEND_CMD"
+        exit 1
+    fi
+
+    if ! command -v wstunnel >/dev/null 2>&1; then
+        missing_commands+=("wstunnel")
+    fi
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        missing_commands+=("ssh-keygen")
+    fi
+    if (( ${#missing_commands[@]} > 0 )); then
+        echo "Missing required host command(s): ${missing_commands[*]}"
+        echo "Install tunnel host packages, then rerun:"
+        echo "  sudo apt-get update"
+        echo "  sudo apt-get install -y openssh-client"
+        echo "  # ensure /usr/local/bin/wstunnel exists and is executable"
         exit 1
     fi
 
@@ -316,7 +356,8 @@ write_env_file() {
         emit_env_line "REMOTE_TUNNEL_DEVICE_ID" "$DEVICE_ID"
         emit_env_line "REMOTE_TUNNEL_LOCAL_HOST" "$LOCAL_HOST"
         emit_env_line "REMOTE_TUNNEL_LOCAL_PORT" "$LOCAL_PORT"
-        emit_env_line "REMOTE_TUNNEL_BASTION_HOST_KEY" "$BASTION_HOST_KEY"
+        emit_env_line "REMOTE_TUNNEL_WSS_URL" "$WSS_URL"
+        emit_env_line "REMOTE_TUNNEL_WSS_PATH_PREFIX" "$WSS_PATH_PREFIX"
     } > "$tmp_file"
 
     install -m 0600 "$tmp_file" "$ENV_FILE"

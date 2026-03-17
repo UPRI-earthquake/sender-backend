@@ -124,9 +124,9 @@ Useful controls:
 
 The watchdog checks backend/frontend container runtime state and attempts start/restart after configured inactivity thresholds. It also enforces Docker restart policy `unless-stopped` on both containers.
 
-### Remote Tunnel (Reverse SSH)
+### Remote Tunnel (SSH over WebSocket)
 `sender-backend INSTALL_SERVICE` also installs and enables:
-- `sender-remote-tunnel.service` (always-on reverse SSH tunnel via `autossh`)
+- `sender-remote-tunnel.service` (always-on reverse tunnel via `wstunnel`)
 
 `install.sh` provisions the service, but tunnel enrollment/config still depends on `/etc/upri/sender-remote-tunnel.env`.
 
@@ -140,8 +140,12 @@ Remote tunnel service commands:
 Automatic setup helper (recommended to reduce manual steps on deployed devices):
 - `setup-remote-tunnel.sh`
 - `sender-setup-remote-tunnel` (installed by `install.sh`)
+- Host package prerequisites:
+  - `sudo apt-get update`
+  - `sudo apt-get install -y openssh-client`
+  - install `wstunnel` under `/usr/local/bin/wstunnel`
 - Example:
-  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
+  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll" --wss-url "wss://earthquake.science.upd.edu.ph" --wss-path-prefix "api/ws-tunnel/<secret>"`
 - If `--enroll-token` is omitted, the helper attempts to auto-discover an existing sender access token from current tunnel env and sender token storage.
 - The helper writes `/etc/upri/sender-remote-tunnel.env`, runs `sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`, restarts `sender-remote-tunnel.service`, and prints tunnel status.
 
@@ -152,24 +156,18 @@ Device tunnel env file:
 Supported tunnel env vars:
 - `REMOTE_TUNNEL_ENABLED`
 - `REMOTE_TUNNEL_DEVICE_ID`
-- `REMOTE_TUNNEL_BASTION_HOST`
-- `REMOTE_TUNNEL_BASTION_PORT`
-- `REMOTE_TUNNEL_BASTION_USER`
 - `REMOTE_TUNNEL_REMOTE_PORT`
 - `REMOTE_TUNNEL_LOCAL_HOST`
 - `REMOTE_TUNNEL_LOCAL_PORT`
 - `REMOTE_TUNNEL_KEY_PATH`
-- `REMOTE_TUNNEL_KNOWN_HOSTS_PATH`
-- `REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL`
-- `REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX`
-- `REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC`
 - `REMOTE_TUNNEL_STATE_FILE`
 - `REMOTE_TUNNEL_PID_FILE`
 - `REMOTE_TUNNEL_AUTO_REGISTER_ENABLED` (default `false`)
 - `REMOTE_TUNNEL_ENROLL_ENDPOINT` (defaults to `<W1 base>/device/tunnel/enroll` when derivable)
 - `REMOTE_TUNNEL_ENROLL_TOKEN` (sensor bearer token for enrollment API)
 - `REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC`
-- `REMOTE_TUNNEL_BASTION_HOST_KEY` (optional known_hosts pin line)
+- `REMOTE_TUNNEL_WSS_URL`
+- `REMOTE_TUNNEL_WSS_PATH_PREFIX`
 
 `/health/sender-state` now also reports `remoteTunnel` when the state file is available.
 

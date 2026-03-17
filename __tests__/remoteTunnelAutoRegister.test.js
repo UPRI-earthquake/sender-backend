@@ -60,7 +60,6 @@ describe('sender-backend remote tunnel auto-register', () => {
   let fakeBin;
   let envFile;
   let keyPath;
-  let knownHostsPath;
   let statePath;
   let pidPath;
 
@@ -69,13 +68,12 @@ describe('sender-backend remote tunnel auto-register', () => {
     fakeBin = path.join(tempRoot, 'bin');
     envFile = path.join(tempRoot, 'sender-remote-tunnel.env');
     keyPath = path.join(tempRoot, 'keys', 'id_ed25519');
-    knownHostsPath = path.join(tempRoot, 'keys', 'known_hosts');
     statePath = path.join(tempRoot, 'state', 'remote-tunnel-state.json');
     pidPath = path.join(tempRoot, 'state', 'remote-tunnel.pid');
 
     await fs.mkdir(fakeBin, { recursive: true });
     await writeExecutable(
-      path.join(fakeBin, 'autossh'),
+      path.join(fakeBin, 'wstunnel'),
       '#!/usr/bin/env bash\nsleep 3\nexit 0\n',
     );
   });
@@ -86,7 +84,7 @@ describe('sender-backend remote tunnel auto-register', () => {
     }
   });
 
-  it('auto-registers tunnel config, writes env/known_hosts, and is retry-safe', async () => {
+  it('auto-registers tunnel config and is retry-safe', async () => {
     let enrollCalls = 0;
     const { server, port } = await startEnrollServer((req, res) => {
       if (req.method === 'POST' && req.url === '/device/tunnel/enroll') {
@@ -96,11 +94,9 @@ describe('sender-backend remote tunnel auto-register', () => {
           status: 80,
           message: 'Device tunnel enrollment successful',
           payload: {
-            REMOTE_TUNNEL_BASTION_HOST: 'ops.example.org',
-            REMOTE_TUNNEL_BASTION_PORT: 443,
-            REMOTE_TUNNEL_BASTION_USER: 'rt-am_r24fa',
             REMOTE_TUNNEL_REMOTE_PORT: 22501,
-            REMOTE_TUNNEL_BASTION_HOST_KEY: 'ops.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockHostKey',
+            REMOTE_TUNNEL_WSS_URL: 'wss://ops.example.org',
+            REMOTE_TUNNEL_WSS_PATH_PREFIX: 'api/ws-tunnel/test-secret',
           },
         }));
         return;
@@ -116,7 +112,6 @@ describe('sender-backend remote tunnel auto-register', () => {
         `REMOTE_TUNNEL_ENROLL_ENDPOINT=http://127.0.0.1:${port}/device/tunnel/enroll`,
         'REMOTE_TUNNEL_ENROLL_TOKEN=test-sensor-token',
         `REMOTE_TUNNEL_KEY_PATH=${keyPath}`,
-        `REMOTE_TUNNEL_KNOWN_HOSTS_PATH=${knownHostsPath}`,
         `REMOTE_TUNNEL_STATE_FILE=${statePath}`,
         `REMOTE_TUNNEL_PID_FILE=${pidPath}`,
       ].join('\n'));
@@ -132,13 +127,9 @@ describe('sender-backend remote tunnel auto-register', () => {
       expect(enrollCalls).toBe(1);
 
       const writtenEnv = await fs.readFile(envFile, 'utf-8');
-      expect(writtenEnv).toMatch(/REMOTE_TUNNEL_BASTION_HOST='ops\.example\.org'/);
-      expect(writtenEnv).toMatch(/REMOTE_TUNNEL_BASTION_USER='rt-am_r24fa'/);
       expect(writtenEnv).toMatch(/REMOTE_TUNNEL_REMOTE_PORT='22501'/);
-      expect(writtenEnv).toMatch(/REMOTE_TUNNEL_BASTION_HOST_KEY='ops\.example\.org ssh-ed25519 [^']+'/);
-
-      const knownHosts = await fs.readFile(knownHostsPath, 'utf-8');
-      expect(knownHosts).toContain('ssh-ed25519');
+      expect(writtenEnv).toMatch(/REMOTE_TUNNEL_WSS_URL='wss:\/\/ops\.example\.org'/);
+      expect(writtenEnv).toMatch(/REMOTE_TUNNEL_WSS_PATH_PREFIX='api\/ws-tunnel\/test-secret'/);
 
       const second = await runScript(['REMOTE_TUNNEL_START'], commonEnv);
       expect(second.code).toBe(0);
@@ -155,7 +146,6 @@ describe('sender-backend remote tunnel auto-register', () => {
       'REMOTE_TUNNEL_AUTO_REGISTER_ENABLED=true',
       'REMOTE_TUNNEL_ENROLL_ENDPOINT=http://127.0.0.1:59999/device/tunnel/enroll',
       `REMOTE_TUNNEL_KEY_PATH=${keyPath}`,
-      `REMOTE_TUNNEL_KNOWN_HOSTS_PATH=${knownHostsPath}`,
       `REMOTE_TUNNEL_STATE_FILE=${statePath}`,
       `REMOTE_TUNNEL_PID_FILE=${pidPath}`,
     ].join('\n'));
@@ -188,7 +178,6 @@ describe('sender-backend remote tunnel auto-register', () => {
         `REMOTE_TUNNEL_ENROLL_ENDPOINT=http://127.0.0.1:${port}/device/tunnel/enroll`,
         'REMOTE_TUNNEL_ENROLL_TOKEN=test-sensor-token',
         `REMOTE_TUNNEL_KEY_PATH=${keyPath}`,
-        `REMOTE_TUNNEL_KNOWN_HOSTS_PATH=${knownHostsPath}`,
         `REMOTE_TUNNEL_STATE_FILE=${statePath}`,
         `REMOTE_TUNNEL_PID_FILE=${pidPath}`,
       ].join('\n'));
@@ -203,7 +192,7 @@ describe('sender-backend remote tunnel auto-register', () => {
       expect(`${result.stdout}${result.stderr}`).toContain('Auto-registration rejected by enrollment API');
 
       const writtenEnv = await fs.readFile(envFile, 'utf-8');
-      expect(writtenEnv).not.toContain('REMOTE_TUNNEL_BASTION_HOST=ops.example.org');
+      expect(writtenEnv).not.toContain('REMOTE_TUNNEL_REMOTE_PORT=22501');
     } finally {
       await closeServer(server);
     }

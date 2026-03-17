@@ -71,13 +71,12 @@ WATCHDOG_LOCK_FILE_DEFAULT="/tmp/upri-sender-maintenance.lock"
 REMOTE_TUNNEL_ENV_FILE_DEFAULT="/etc/upri/sender-remote-tunnel.env"
 REMOTE_TUNNEL_STATE_FILE_DEFAULT="/var/lib/upri-sender/remote-tunnel-state.json"
 REMOTE_TUNNEL_PID_FILE_DEFAULT="/tmp/upri-sender-remote-tunnel.pid"
-REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT=30
-REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT=3
-REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT=15
 REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_DEFAULT="false"
 REMOTE_TUNNEL_ENROLL_ENDPOINT_DEFAULT=""
 REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT=""
 REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT=15
+REMOTE_TUNNEL_WSS_URL_DEFAULT=""
+REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT=""
 AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT="true"
 LAST_PULL_RESULT="unknown"
 AUTO_UPDATE_STATE_FILE_DEFAULT="/var/lib/upri-sender/update-state.json"
@@ -137,22 +136,16 @@ function load_alert_runtime_env() {
 }
 
 load_alert_runtime_env
-REMOTE_TUNNEL_BASTION_HOST_VALUE=""
-REMOTE_TUNNEL_BASTION_PORT_VALUE=443
-REMOTE_TUNNEL_BASTION_USER_VALUE=""
 REMOTE_TUNNEL_REMOTE_PORT_VALUE=""
 REMOTE_TUNNEL_LOCAL_HOST_VALUE="127.0.0.1"
 REMOTE_TUNNEL_LOCAL_PORT_VALUE=22
 REMOTE_TUNNEL_KEY_PATH_VALUE="/etc/upri/remote-tunnel/id_ed25519"
-REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE="/etc/upri/remote-tunnel/known_hosts"
-REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE="$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT"
-REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE="$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT"
-REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE="$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT"
 REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE="$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_DEFAULT"
 REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE="$REMOTE_TUNNEL_ENROLL_ENDPOINT_DEFAULT"
 REMOTE_TUNNEL_ENROLL_TOKEN_VALUE="$REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT"
 REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE="$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT"
-REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE=""
+REMOTE_TUNNEL_WSS_URL_VALUE="$REMOTE_TUNNEL_WSS_URL_DEFAULT"
+REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="$REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT"
 WATCHDOG_BACKEND_STOPPED_SINCE=0
 WATCHDOG_FRONTEND_STOPPED_SINCE=0
 WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
@@ -349,7 +342,6 @@ function write_remote_tunnel_state() {
     local connected_json="false"
     local last_connected_json="null"
     local last_error_json="null"
-    local bastion_port_json="null"
     local remote_port_json="null"
     local local_port_json="null"
 
@@ -365,9 +357,6 @@ function write_remote_tunnel_state() {
     if [[ -n "$last_error" ]]; then
         last_error_json="\"$(json_escape "$last_error")\""
     fi
-    if [[ "${REMOTE_TUNNEL_BASTION_PORT_VALUE:-}" =~ ^[0-9]+$ ]]; then
-        bastion_port_json="${REMOTE_TUNNEL_BASTION_PORT_VALUE}"
-    fi
     if [[ "${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}" =~ ^[0-9]+$ ]]; then
         remote_port_json="${REMOTE_TUNNEL_REMOTE_PORT_VALUE}"
     fi
@@ -378,7 +367,7 @@ function write_remote_tunnel_state() {
     now_iso="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     tmp_file="$(mktemp "/tmp/upri-sender-remote-tunnel-state.XXXXXX.json")" || return 1
     cat <<EOF > "$tmp_file"
-{"updatedAt":"$(json_escape "$now_iso")","connected":$connected_json,"lastConnectedAt":$last_connected_json,"lastError":$last_error_json,"deviceId":"$(json_escape "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}")","bastionHost":"$(json_escape "${REMOTE_TUNNEL_BASTION_HOST_VALUE:-}")","bastionPort":$bastion_port_json,"bastionUser":"$(json_escape "${REMOTE_TUNNEL_BASTION_USER_VALUE:-}")","remotePort":$remote_port_json,"localHost":"$(json_escape "${REMOTE_TUNNEL_LOCAL_HOST_VALUE:-127.0.0.1}")","localPort":$local_port_json}
+{"updatedAt":"$(json_escape "$now_iso")","connected":$connected_json,"lastConnectedAt":$last_connected_json,"lastError":$last_error_json,"deviceId":"$(json_escape "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}")","remotePort":$remote_port_json,"localHost":"$(json_escape "${REMOTE_TUNNEL_LOCAL_HOST_VALUE:-127.0.0.1}")","localPort":$local_port_json,"wssUrl":"$(json_escape "${REMOTE_TUNNEL_WSS_URL_VALUE:-}")","wssPathPrefix":"$(json_escape "${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE:-}")"}
 EOF
 
     if ! install_data_payload "$tmp_file" "$state_path" 0644; then
@@ -404,21 +393,17 @@ function load_remote_tunnel_env() {
 
     REMOTE_TUNNEL_ENABLED_VALUE="${REMOTE_TUNNEL_ENABLED:-false}"
     REMOTE_TUNNEL_DEVICE_ID_VALUE="${REMOTE_TUNNEL_DEVICE_ID:-}"
-    REMOTE_TUNNEL_BASTION_HOST_VALUE="${REMOTE_TUNNEL_BASTION_HOST:-}"
-    REMOTE_TUNNEL_BASTION_PORT_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_BASTION_PORT:-443}" 443 1)"
-    REMOTE_TUNNEL_BASTION_USER_VALUE="${REMOTE_TUNNEL_BASTION_USER:-}"
     REMOTE_TUNNEL_REMOTE_PORT_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_REMOTE_PORT:-0}" 0 0)"
     REMOTE_TUNNEL_LOCAL_HOST_VALUE="${REMOTE_TUNNEL_LOCAL_HOST:-127.0.0.1}"
     REMOTE_TUNNEL_LOCAL_PORT_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_LOCAL_PORT:-22}" 22 1)"
     REMOTE_TUNNEL_KEY_PATH_VALUE="${REMOTE_TUNNEL_KEY_PATH:-/etc/upri/remote-tunnel/id_ed25519}"
-    REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE="${REMOTE_TUNNEL_KNOWN_HOSTS_PATH:-/etc/upri/remote-tunnel/known_hosts}"
-    REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL:-$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT}" "$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_DEFAULT" 5)"
-    REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX:-$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT}" "$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_DEFAULT" 1)"
-    REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC:-$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT}" "$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_DEFAULT" 5)"
     REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE="${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED:-$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_DEFAULT}"
     REMOTE_TUNNEL_ENROLL_TOKEN_VALUE="${REMOTE_TUNNEL_ENROLL_TOKEN:-$REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT}"
     REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC:-$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT}" "$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT" 5)"
-    REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE="${REMOTE_TUNNEL_BASTION_HOST_KEY:-}"
+    REMOTE_TUNNEL_WSS_URL_VALUE="${REMOTE_TUNNEL_WSS_URL:-$REMOTE_TUNNEL_WSS_URL_DEFAULT}"
+    REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT}"
+    REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE#/}"
+    REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE%/}"
 
     derived_enroll_endpoint=""
     if [[ -n "${W1_DEV_IP:-}" && -n "${W1_DEV_PORT:-}" ]]; then
@@ -440,19 +425,13 @@ function remote_tunnel_config_is_complete() {
     if [[ -z "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}" ]]; then
         return 1
     fi
-    if [[ -z "${REMOTE_TUNNEL_BASTION_HOST_VALUE:-}" ]]; then
+    if [[ -z "${REMOTE_TUNNEL_WSS_URL_VALUE:-}" ]]; then
         return 1
     fi
-    if [[ -z "${REMOTE_TUNNEL_BASTION_USER_VALUE:-}" ]]; then
+    if [[ -z "${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE:-}" ]]; then
         return 1
     fi
     if ! [[ "${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}" =~ ^[0-9]+$ ]] || (( REMOTE_TUNNEL_REMOTE_PORT_VALUE < 1 || REMOTE_TUNNEL_REMOTE_PORT_VALUE > 65535 )); then
-        return 1
-    fi
-    if [[ ! -s "${REMOTE_TUNNEL_KEY_PATH_VALUE:-}" ]]; then
-        return 1
-    fi
-    if [[ ! -s "${REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE:-}" ]]; then
         return 1
     fi
     return 0
@@ -505,27 +484,21 @@ function persist_remote_tunnel_env() {
 
     tmp_file="$(mktemp "/tmp/upri-sender-remote-tunnel-env.XXXXXX")" || return 1
     {
-        printf "# Sender reverse SSH tunnel configuration\n"
+        printf "# Sender reverse tunnel configuration (wstunnel)\n"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENABLED" "${REMOTE_TUNNEL_ENABLED_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_DEVICE_ID" "${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_HOST" "${REMOTE_TUNNEL_BASTION_HOST_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_PORT" "${REMOTE_TUNNEL_BASTION_PORT_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_USER" "${REMOTE_TUNNEL_BASTION_USER_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_REMOTE_PORT" "${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_LOCAL_HOST" "${REMOTE_TUNNEL_LOCAL_HOST_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_LOCAL_PORT" "${REMOTE_TUNNEL_LOCAL_PORT_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_KEY_PATH" "${REMOTE_TUNNEL_KEY_PATH_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_KNOWN_HOSTS_PATH" "${REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL" "${REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX" "${REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC" "${REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_STATE_FILE" "${REMOTE_TUNNEL_STATE_FILE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_PID_FILE" "${REMOTE_TUNNEL_PID_FILE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_AUTO_REGISTER_ENABLED" "${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENROLL_ENDPOINT" "${REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENROLL_TOKEN" "${REMOTE_TUNNEL_ENROLL_TOKEN_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC" "${REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE:-}"
-        remote_tunnel_emit_env_line "REMOTE_TUNNEL_BASTION_HOST_KEY" "${REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_WSS_URL" "${REMOTE_TUNNEL_WSS_URL_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_WSS_PATH_PREFIX" "${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE:-}"
     } > "$tmp_file"
 
     if ! install_data_payload "$tmp_file" "$env_file" 0600; then
@@ -543,7 +516,6 @@ function remote_tunnel_apply_runtime_permissions() {
     local service_group
     local env_file="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
     local key_dir
-    local known_hosts_dir
     local dir_path
 
     if ! id -u "$service_user" >/dev/null 2>&1; then
@@ -552,9 +524,8 @@ function remote_tunnel_apply_runtime_permissions() {
 
     service_group="$(id -gn "$service_user" 2>/dev/null || echo "$service_user")"
     key_dir="$(dirname "$REMOTE_TUNNEL_KEY_PATH_VALUE")"
-    known_hosts_dir="$(dirname "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE")"
 
-    for dir_path in "$key_dir" "$known_hosts_dir"; do
+    for dir_path in "$key_dir"; do
         [[ -n "$dir_path" ]] || continue
         mkdir -p "$dir_path" >/dev/null 2>&1 || true
         chown "$service_user:$service_group" "$dir_path" >/dev/null 2>&1 || true
@@ -572,42 +543,6 @@ function remote_tunnel_apply_runtime_permissions() {
     if [[ -f "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" ]]; then
         chown "$service_user:$service_group" "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" >/dev/null 2>&1 || true
         chmod 0644 "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" >/dev/null 2>&1 || true
-    fi
-    if [[ -f "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" ]]; then
-        chown "$service_user:$service_group" "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" >/dev/null 2>&1 || true
-        chmod 0644 "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" >/dev/null 2>&1 || true
-    fi
-    return 0
-}
-
-function remote_tunnel_write_known_hosts() {
-    local known_hosts_path="$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE"
-    local known_hosts_dir
-    local tmp_file
-
-    if [[ -n "$REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE" ]]; then
-        known_hosts_dir="$(dirname "$known_hosts_path")"
-        if ! mkdir -p "$known_hosts_dir" >/dev/null 2>&1; then
-            if ! (command -v sudo >/dev/null 2>&1 && sudo -n mkdir -p "$known_hosts_dir" >/dev/null 2>&1); then
-                remote_tunnel_config_error "Unable to create known_hosts directory: $known_hosts_dir"
-                return 1
-            fi
-        fi
-
-        tmp_file="$(mktemp "/tmp/upri-sender-known-hosts.XXXXXX")" || return 1
-        printf '%s\n' "$REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE" > "$tmp_file"
-        if ! install_data_payload "$tmp_file" "$known_hosts_path" 0644; then
-            rm -f "$tmp_file" >/dev/null 2>&1
-            remote_tunnel_config_error "Unable to write known_hosts file: $known_hosts_path"
-            return 1
-        fi
-        rm -f "$tmp_file" >/dev/null 2>&1
-        return 0
-    fi
-
-    if [[ ! -s "$known_hosts_path" ]]; then
-        remote_tunnel_config_error "Enrollment response did not include bastion host key and known_hosts file is empty: $known_hosts_path"
-        return 1
     fi
     return 0
 }
@@ -679,8 +614,8 @@ function remote_tunnel_attempt_auto_register() {
     local public_key
     local payload
     local remote_port_value
-    local bastion_port_value
-    local response_host_key
+    local response_wss_url
+    local response_wss_path_prefix
 
     if ! is_truthy "$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE"; then
         return 0
@@ -752,31 +687,30 @@ function remote_tunnel_attempt_auto_register() {
         return 1
     fi
 
-    REMOTE_TUNNEL_BASTION_HOST_VALUE="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_BASTION_HOST")"
-    REMOTE_TUNNEL_BASTION_USER_VALUE="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_BASTION_USER")"
-    response_host_key="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_BASTION_HOST_KEY")"
     remote_port_value="$(remote_tunnel_extract_json_number "$response_body" "REMOTE_TUNNEL_REMOTE_PORT")"
-    bastion_port_value="$(remote_tunnel_extract_json_number "$response_body" "REMOTE_TUNNEL_BASTION_PORT")"
+    response_wss_url="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_WSS_URL")"
+    response_wss_path_prefix="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_WSS_PATH_PREFIX")"
+    response_wss_path_prefix="${response_wss_path_prefix#/}"
+    response_wss_path_prefix="${response_wss_path_prefix%/}"
 
-    if [[ -z "$REMOTE_TUNNEL_BASTION_HOST_VALUE" || -z "$REMOTE_TUNNEL_BASTION_USER_VALUE" || -z "$remote_port_value" ]]; then
+    if [[ -z "$remote_port_value" ]]; then
         remote_tunnel_config_error "Enrollment API response missing required tunnel mapping fields."
         return 1
     fi
 
     REMOTE_TUNNEL_REMOTE_PORT_VALUE="$remote_port_value"
-    if [[ -n "$bastion_port_value" ]]; then
-        REMOTE_TUNNEL_BASTION_PORT_VALUE="$bastion_port_value"
+    if [[ -n "$response_wss_url" ]]; then
+        REMOTE_TUNNEL_WSS_URL_VALUE="$response_wss_url"
     fi
-    if [[ -n "$response_host_key" ]]; then
-        REMOTE_TUNNEL_BASTION_HOST_KEY_VALUE="$response_host_key"
+    if [[ -n "$response_wss_path_prefix" ]]; then
+        REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="$response_wss_path_prefix"
     fi
     REMOTE_TUNNEL_ENABLED_VALUE="true"
 
-    remote_tunnel_write_known_hosts || return 1
     persist_remote_tunnel_env || return 1
 
     echo -en "[  \e[32mOK\e[0m  ] "
-    echo "Remote tunnel auto-registration succeeded (device=$REMOTE_TUNNEL_DEVICE_ID_VALUE user=$REMOTE_TUNNEL_BASTION_USER_VALUE port=$REMOTE_TUNNEL_REMOTE_PORT_VALUE)."
+    echo "Remote tunnel auto-registration succeeded (device=$REMOTE_TUNNEL_DEVICE_ID_VALUE port=$REMOTE_TUNNEL_REMOTE_PORT_VALUE)."
     return 0
 }
 
@@ -788,11 +722,6 @@ function remote_tunnel_config_error() {
 }
 
 function remote_tunnel_validate_config() {
-    local key_mode
-    local key_mode_num
-    local key_group
-    local key_other
-
     if ! is_truthy "$REMOTE_TUNNEL_ENABLED_VALUE"; then
         REMOTE_TUNNEL_LAST_ERROR_VALUE="remote tunnel disabled (REMOTE_TUNNEL_ENABLED=false)"
         return 3
@@ -801,16 +730,20 @@ function remote_tunnel_validate_config() {
         remote_tunnel_config_error "REMOTE_TUNNEL_DEVICE_ID is required."
         return 1
     fi
-    if [[ -z "$REMOTE_TUNNEL_BASTION_HOST_VALUE" ]]; then
-        remote_tunnel_config_error "REMOTE_TUNNEL_BASTION_HOST is required."
+    if [[ -z "$REMOTE_TUNNEL_WSS_URL_VALUE" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_WSS_URL is required."
         return 1
     fi
-    if [[ -z "$REMOTE_TUNNEL_BASTION_USER_VALUE" ]]; then
-        remote_tunnel_config_error "REMOTE_TUNNEL_BASTION_USER is required."
+    if [[ ! "$REMOTE_TUNNEL_WSS_URL_VALUE" =~ ^wss?:// ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_WSS_URL must start with ws:// or wss://."
         return 1
     fi
-    if ! [[ "$REMOTE_TUNNEL_BASTION_PORT_VALUE" =~ ^[0-9]+$ ]] || (( REMOTE_TUNNEL_BASTION_PORT_VALUE < 1 || REMOTE_TUNNEL_BASTION_PORT_VALUE > 65535 )); then
-        remote_tunnel_config_error "REMOTE_TUNNEL_BASTION_PORT must be between 1 and 65535."
+    if [[ -z "$REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_WSS_PATH_PREFIX is required."
+        return 1
+    fi
+    if [[ "$REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE" =~ [[:space:]] ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_WSS_PATH_PREFIX must not contain whitespace."
         return 1
     fi
     if ! [[ "$REMOTE_TUNNEL_REMOTE_PORT_VALUE" =~ ^[0-9]+$ ]] || (( REMOTE_TUNNEL_REMOTE_PORT_VALUE < 1 || REMOTE_TUNNEL_REMOTE_PORT_VALUE > 65535 )); then
@@ -821,33 +754,8 @@ function remote_tunnel_validate_config() {
         remote_tunnel_config_error "REMOTE_TUNNEL_LOCAL_PORT must be between 1 and 65535."
         return 1
     fi
-    if [[ ! -s "$REMOTE_TUNNEL_KEY_PATH_VALUE" ]]; then
-        remote_tunnel_config_error "REMOTE_TUNNEL_KEY_PATH is missing or empty: $REMOTE_TUNNEL_KEY_PATH_VALUE"
-        return 1
-    fi
-    if [[ ! -s "$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" ]]; then
-        remote_tunnel_config_error "REMOTE_TUNNEL_KNOWN_HOSTS_PATH is missing or empty: $REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE"
-        return 1
-    fi
-    if ! command -v autossh >/dev/null 2>&1; then
-        remote_tunnel_config_error "autossh is required but not installed."
-        return 1
-    fi
-    if ! command -v ssh >/dev/null 2>&1; then
-        remote_tunnel_config_error "ssh client is required but not installed."
-        return 1
-    fi
-
-    key_mode="$(stat -c '%a' "$REMOTE_TUNNEL_KEY_PATH_VALUE" 2>/dev/null || true)"
-    if [[ ! "$key_mode" =~ ^[0-9]+$ ]]; then
-        remote_tunnel_config_error "Unable to read key permissions from $REMOTE_TUNNEL_KEY_PATH_VALUE."
-        return 1
-    fi
-    key_mode_num=$((10#$key_mode))
-    key_group=$(( (key_mode_num / 10) % 10 ))
-    key_other=$(( key_mode_num % 10 ))
-    if (( key_group != 0 || key_other != 0 )); then
-        remote_tunnel_config_error "REMOTE_TUNNEL_KEY_PATH permissions are too open ($key_mode). Use 600 or 400."
+    if ! command -v wstunnel >/dev/null 2>&1; then
+        remote_tunnel_config_error "wstunnel is required but not installed."
         return 1
     fi
 
@@ -856,11 +764,11 @@ function remote_tunnel_validate_config() {
 }
 
 function remote_tunnel_start() {
-    local autossh_pid=""
+    local wstunnel_pid=""
     local connected_at=""
     local exit_code=1
-    local ssh_target
     local cleanup_reason="remote tunnel stopped by signal"
+    local wstunnel_cmd
 
     load_remote_tunnel_env
     if ! remote_tunnel_attempt_auto_register; then
@@ -886,32 +794,22 @@ function remote_tunnel_start() {
     esac
 
     write_remote_tunnel_state "false" "" "connecting" || true
-    ssh_target="${REMOTE_TUNNEL_BASTION_USER_VALUE}@${REMOTE_TUNNEL_BASTION_HOST_VALUE}"
+    trap 'cleanup_reason="remote tunnel stopped by system"; if [[ -n "$wstunnel_pid" ]] && kill -0 "$wstunnel_pid" >/dev/null 2>&1; then kill "$wstunnel_pid" >/dev/null 2>&1 || true; wait "$wstunnel_pid" >/dev/null 2>&1 || true; fi; rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true; write_remote_tunnel_state "false" "$connected_at" "$cleanup_reason" || true; exit 0' INT TERM
 
-    trap 'cleanup_reason="remote tunnel stopped by system"; if [[ -n "$autossh_pid" ]] && kill -0 "$autossh_pid" >/dev/null 2>&1; then kill "$autossh_pid" >/dev/null 2>&1 || true; wait "$autossh_pid" >/dev/null 2>&1 || true; fi; rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true; write_remote_tunnel_state "false" "$connected_at" "$cleanup_reason" || true; exit 0' INT TERM
-
-    autossh -M 0 -N \
-        -o ExitOnForwardFailure=yes \
-        -o ServerAliveInterval="$REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL_VALUE" \
-        -o ServerAliveCountMax="$REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX_VALUE" \
-        -o ConnectTimeout="$REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC_VALUE" \
-        -o StrictHostKeyChecking=yes \
-        -o UserKnownHostsFile="$REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE" \
-        -o IdentitiesOnly=yes \
-        -i "$REMOTE_TUNNEL_KEY_PATH_VALUE" \
-        -p "$REMOTE_TUNNEL_BASTION_PORT_VALUE" \
-        -R "127.0.0.1:${REMOTE_TUNNEL_REMOTE_PORT_VALUE}:${REMOTE_TUNNEL_LOCAL_HOST_VALUE}:${REMOTE_TUNNEL_LOCAL_PORT_VALUE}" \
-        "$ssh_target" &
-    autossh_pid="$!"
-
+    wstunnel_cmd=("wstunnel" "client" "-R" "tcp://127.0.0.1:${REMOTE_TUNNEL_REMOTE_PORT_VALUE}:${REMOTE_TUNNEL_LOCAL_HOST_VALUE}:${REMOTE_TUNNEL_LOCAL_PORT_VALUE}" "${REMOTE_TUNNEL_WSS_URL_VALUE}" "--tls-verify-certificate" "--http-upgrade-path-prefix" "${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE}")
+    if [[ -n "$REMOTE_TUNNEL_ENROLL_TOKEN_VALUE" ]]; then
+        wstunnel_cmd+=("--http-headers" "Authorization: Bearer ${REMOTE_TUNNEL_ENROLL_TOKEN_VALUE}")
+    fi
+    "${wstunnel_cmd[@]}" &
+    wstunnel_pid="$!"
     mkdir -p "$(dirname "$REMOTE_TUNNEL_PID_FILE")" >/dev/null 2>&1 || true
-    printf "%s\n" "$autossh_pid" > "$REMOTE_TUNNEL_PID_FILE" 2>/dev/null || true
+    printf "%s\n" "$wstunnel_pid" > "$REMOTE_TUNNEL_PID_FILE" 2>/dev/null || true
 
     sleep 2
-    if ! kill -0 "$autossh_pid" >/dev/null 2>&1; then
-        wait "$autossh_pid" >/dev/null 2>&1 || exit_code=$?
+    if ! kill -0 "$wstunnel_pid" >/dev/null 2>&1; then
+        wait "$wstunnel_pid" >/dev/null 2>&1 || exit_code=$?
         rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true
-        write_remote_tunnel_state "false" "" "autossh exited before tunnel became ready (exit $exit_code)" || true
+        write_remote_tunnel_state "false" "" "wstunnel exited before tunnel became ready (exit $exit_code)" || true
         trap - INT TERM
         return "$exit_code"
     fi
@@ -919,10 +817,10 @@ function remote_tunnel_start() {
     connected_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     write_remote_tunnel_state "true" "$connected_at" "" || true
 
-    wait "$autossh_pid" >/dev/null 2>&1
+    wait "$wstunnel_pid" >/dev/null 2>&1
     exit_code=$?
     rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true
-    write_remote_tunnel_state "false" "$connected_at" "autossh exited (exit $exit_code)" || true
+    write_remote_tunnel_state "false" "$connected_at" "wstunnel exited (exit $exit_code)" || true
     trap - INT TERM
     return "$exit_code"
 }
@@ -966,10 +864,10 @@ function remote_tunnel_status() {
     fi
     echo "Remote tunnel environment file: $REMOTE_TUNNEL_ENV_FILE"
     echo "Device ID: ${REMOTE_TUNNEL_DEVICE_ID_VALUE:-unset}"
-    echo "Bastion target: ${REMOTE_TUNNEL_BASTION_USER_VALUE:-unset}@${REMOTE_TUNNEL_BASTION_HOST_VALUE:-unset}:${REMOTE_TUNNEL_BASTION_PORT_VALUE}"
     echo "Reverse bind: 127.0.0.1:${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-unset} -> ${REMOTE_TUNNEL_LOCAL_HOST_VALUE}:${REMOTE_TUNNEL_LOCAL_PORT_VALUE}"
     echo "Key path: ${REMOTE_TUNNEL_KEY_PATH_VALUE:-unset}"
-    echo "Known hosts path: ${REMOTE_TUNNEL_KNOWN_HOSTS_PATH_VALUE:-unset}"
+    echo "WSS URL: ${REMOTE_TUNNEL_WSS_URL_VALUE:-unset}"
+    echo "WSS path prefix: ${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE:-unset}"
     echo "Auto-register enabled: ${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE:-false}"
     echo "Enrollment endpoint: ${REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE:-unset}"
     echo "Enrollment token: $token_state"
@@ -3057,27 +2955,21 @@ function write_remote_tunnel_env_template_if_missing() {
 
     tmp_file="$(mktemp "/tmp/upri-sender-remote-tunnel-env.XXXXXX")" || return 1
     cat <<EOF > "$tmp_file"
-# Sender reverse SSH tunnel configuration
+# Sender reverse tunnel configuration (wstunnel)
 REMOTE_TUNNEL_ENABLED=false
 REMOTE_TUNNEL_DEVICE_ID=
-REMOTE_TUNNEL_BASTION_HOST=
-REMOTE_TUNNEL_BASTION_PORT=443
-REMOTE_TUNNEL_BASTION_USER=
 REMOTE_TUNNEL_REMOTE_PORT=
 REMOTE_TUNNEL_LOCAL_HOST=127.0.0.1
 REMOTE_TUNNEL_LOCAL_PORT=22
 REMOTE_TUNNEL_KEY_PATH=/etc/upri/remote-tunnel/id_ed25519
-REMOTE_TUNNEL_KNOWN_HOSTS_PATH=/etc/upri/remote-tunnel/known_hosts
-REMOTE_TUNNEL_SERVER_ALIVE_INTERVAL=30
-REMOTE_TUNNEL_SERVER_ALIVE_COUNT_MAX=3
-REMOTE_TUNNEL_CONNECT_TIMEOUT_SEC=15
 REMOTE_TUNNEL_STATE_FILE=/var/lib/upri-sender/remote-tunnel-state.json
 REMOTE_TUNNEL_PID_FILE=/tmp/upri-sender-remote-tunnel.pid
 REMOTE_TUNNEL_AUTO_REGISTER_ENABLED=false
 REMOTE_TUNNEL_ENROLL_ENDPOINT=
 REMOTE_TUNNEL_ENROLL_TOKEN=
 REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC=15
-REMOTE_TUNNEL_BASTION_HOST_KEY=
+REMOTE_TUNNEL_WSS_URL=
+REMOTE_TUNNEL_WSS_PATH_PREFIX=
 EOF
 
     if install_data_payload "$tmp_file" "$env_file" 0640; then
@@ -3096,7 +2988,7 @@ EOF
 function install_remote_tunnel_service() {
     cat <<EOF > "$REMOTE_TUNNEL_SERVICE_FILE"
 [Unit]
-Description=UPRI: Sender Reverse SSH Tunnel Service
+Description=UPRI: Sender Reverse WebSocket Tunnel Service
 ConditionPathExists=/usr/local/bin/sender-backend
 Wants=network-online.target
 After=network-online.target
