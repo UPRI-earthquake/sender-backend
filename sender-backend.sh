@@ -827,6 +827,37 @@ function remote_tunnel_start() {
 
 function remote_tunnel_stop() {
     local pid
+    local scan_pid
+    local scan_cmd
+    local remote_bind_pattern=""
+    local killed_any=0
+
+    terminate_remote_tunnel_pid() {
+        local target_pid="$1"
+        local elapsed=0
+        local wait_seconds=3
+
+        [[ "$target_pid" =~ ^[0-9]+$ ]] || return 1
+
+        if ! kill -0 "$target_pid" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        kill "$target_pid" >/dev/null 2>&1 || true
+        while kill -0 "$target_pid" >/dev/null 2>&1; do
+            if (( elapsed >= wait_seconds )); then
+                kill -9 "$target_pid" >/dev/null 2>&1 || true
+                break
+            fi
+            sleep 1
+            ((elapsed++))
+        done
+
+        if kill -0 "$target_pid" >/dev/null 2>&1; then
+            return 1
+        fi
+        return 0
+    }
 
     load_remote_tunnel_env
     if command -v systemctl >/dev/null 2>&1; then
@@ -844,14 +875,32 @@ function remote_tunnel_stop() {
     if [[ -r "$REMOTE_TUNNEL_PID_FILE" ]]; then
         pid="$(head -n 1 "$REMOTE_TUNNEL_PID_FILE" | tr -d '\r' | xargs)"
         if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
-            kill "$pid" >/dev/null 2>&1 || true
-            sleep 1
-            if kill -0 "$pid" >/dev/null 2>&1; then
-                kill -9 "$pid" >/dev/null 2>&1 || true
+            if terminate_remote_tunnel_pid "$pid"; then
+                killed_any=1
             fi
         fi
     fi
+
+    if [[ "${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}" =~ ^[0-9]+$ ]] && (( REMOTE_TUNNEL_REMOTE_PORT_VALUE >= 1 && REMOTE_TUNNEL_REMOTE_PORT_VALUE <= 65535 )); then
+        remote_bind_pattern="tcp://127.0.0.1:${REMOTE_TUNNEL_REMOTE_PORT_VALUE}:"
+    fi
+
+    if [[ -n "$remote_bind_pattern" ]]; then
+        while IFS=$'\t' read -r scan_pid scan_cmd; do
+            [[ "$scan_pid" =~ ^[0-9]+$ ]] || continue
+            [[ "$scan_cmd" == *"wstunnel client"* ]] || continue
+            [[ "$scan_cmd" == *"$remote_bind_pattern"* ]] || continue
+            if terminate_remote_tunnel_pid "$scan_pid"; then
+                killed_any=1
+            fi
+        done < <(ps -eo pid=,args= | awk '{pid=$1; $1=""; sub(/^[[:space:]]+/, "", $0); printf "%s\t%s\n", pid, $0}')
+    fi
+
     rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true
+    if [[ $killed_any -eq 1 ]]; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Stopped stale remote tunnel process(es)."
+    fi
     write_remote_tunnel_state "false" "" "remote tunnel stopped by operator" || true
     return 0
 }

@@ -10,7 +10,6 @@ LOCAL_PORT_DEFAULT="22"
 ENROLL_TIMEOUT_DEFAULT="15"
 WSS_URL_DEFAULT=""
 WSS_PATH_PREFIX_DEFAULT=""
-WSTUNNEL_IMAGE_DEFAULT="ghcr.io/erebe/wstunnel:latest"
 WSTUNNEL_VERSION_DEFAULT="10.5.2"
 
 ENV_FILE="$ENV_FILE_DEFAULT"
@@ -24,7 +23,6 @@ LOCAL_PORT="$LOCAL_PORT_DEFAULT"
 ENROLL_TIMEOUT="$ENROLL_TIMEOUT_DEFAULT"
 WSS_URL="${REMOTE_TUNNEL_WSS_URL:-$WSS_URL_DEFAULT}"
 WSS_PATH_PREFIX="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$WSS_PATH_PREFIX_DEFAULT}"
-WSTUNNEL_IMAGE="${REMOTE_TUNNEL_WSTUNNEL_IMAGE:-$WSTUNNEL_IMAGE_DEFAULT}"
 WSTUNNEL_VERSION="${REMOTE_TUNNEL_WSTUNNEL_VERSION:-$WSTUNNEL_VERSION_DEFAULT}"
 SKIP_RESTART="false"
 
@@ -42,8 +40,7 @@ Options:
   --enroll-timeout-sec <seconds>    Enrollment request timeout (default: 15)
   --wss-url <url>                   WebSocket tunnel endpoint override (optional)
   --wss-path-prefix <prefix>        WS upgrade path prefix override (optional)
-  --wstunnel-image <image>          Docker image used for wstunnel auto-install (default: $WSTUNNEL_IMAGE_DEFAULT)
-  --wstunnel-version <version>      Release version fallback (default: $WSTUNNEL_VERSION_DEFAULT)
+  --wstunnel-version <version>      Pinned wstunnel release version for auto-install (default: $WSTUNNEL_VERSION_DEFAULT)
   --auto-register <true|false>      Enable/disable auto-registration (default: true)
   --env-file <path>                 Env file path (default: /etc/upri/sender-remote-tunnel.env)
   --sender-backend-cmd <cmd>        sender-backend command path (default: sender-backend)
@@ -57,7 +54,7 @@ Examples:
 Host package prerequisites:
   sudo apt-get update
   sudo apt-get install -y openssh-client
-  # wstunnel is auto-installed when missing (requires docker access)
+  # wstunnel is auto-installed from GitHub release when missing
 EOF
 }
 
@@ -245,10 +242,6 @@ parse_args() {
                 WSS_PATH_PREFIX="${2:-}"
                 shift 2
                 ;;
-            --wstunnel-image)
-                WSTUNNEL_IMAGE="${2:-}"
-                shift 2
-                ;;
             --wstunnel-version)
                 WSTUNNEL_VERSION="${2:-}"
                 shift 2
@@ -304,10 +297,6 @@ parse_args() {
         echo "Invalid --wss-path-prefix value: $WSS_PATH_PREFIX"
         exit 1
     fi
-    if [[ -z "$WSTUNNEL_IMAGE" ]]; then
-        echo "Invalid --wstunnel-image value: $WSTUNNEL_IMAGE"
-        exit 1
-    fi
     if [[ -z "$WSTUNNEL_VERSION" ]]; then
         echo "Invalid --wstunnel-version value: $WSTUNNEL_VERSION"
         exit 1
@@ -341,33 +330,6 @@ resolve_wstunnel_release_arch() {
             return 1
             ;;
     esac
-}
-
-install_wstunnel_from_docker_image() {
-    local container_id=""
-    local tmp_bin=""
-
-    command -v docker >/dev/null 2>&1 || return 1
-
-    container_id="$(docker create "$WSTUNNEL_IMAGE")" || return 1
-    tmp_bin="$(mktemp "/tmp/upri-wstunnel-bin.XXXXXX")" || {
-        docker rm -f "$container_id" >/dev/null 2>&1 || true
-        return 1
-    }
-
-    if ! docker cp "${container_id}:/home/app/wstunnel" "$tmp_bin" >/dev/null 2>&1; then
-        rm -f "$tmp_bin" >/dev/null 2>&1 || true
-        docker rm -f "$container_id" >/dev/null 2>&1 || true
-        return 1
-    fi
-
-    docker rm -f "$container_id" >/dev/null 2>&1 || true
-    if ! install -m 0755 "$tmp_bin" /usr/local/bin/wstunnel; then
-        rm -f "$tmp_bin" >/dev/null 2>&1 || true
-        return 1
-    fi
-    rm -f "$tmp_bin" >/dev/null 2>&1 || true
-    return 0
 }
 
 install_wstunnel_from_release() {
@@ -417,20 +379,20 @@ install_wstunnel_from_release() {
 }
 
 ensure_wstunnel_installed() {
-    if command -v wstunnel >/dev/null 2>&1; then
-        return 0
-    fi
+    local installed_version=""
+    local expected_version=""
 
-    if command -v docker >/dev/null 2>&1; then
-        echo "wstunnel not found; attempting auto-install from $WSTUNNEL_IMAGE ..."
-        if install_wstunnel_from_docker_image; then
-            echo "Installed wstunnel to /usr/local/bin/wstunnel."
+    expected_version="${WSTUNNEL_VERSION#v}"
+
+    if command -v wstunnel >/dev/null 2>&1; then
+        installed_version="$(wstunnel --version 2>/dev/null | awk 'NR==1 {print $2}')"
+        if [[ "$installed_version" == "$expected_version" ]]; then
             return 0
         fi
-        echo "wstunnel image install failed; falling back to release binary v${WSTUNNEL_VERSION#v} ..."
-    else
-        echo "Docker not available; installing wstunnel from release binary v${WSTUNNEL_VERSION#v} ..."
+        echo "wstunnel version mismatch (found: ${installed_version:-unknown}, expected: $expected_version); reinstalling ..."
     fi
+
+    echo "Installing wstunnel from GitHub release v${WSTUNNEL_VERSION#v} ..."
 
     if install_wstunnel_from_release; then
         echo "Installed wstunnel to /usr/local/bin/wstunnel."

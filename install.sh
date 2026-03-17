@@ -16,8 +16,6 @@ START_RETRY_COUNT_DEFAULT=3
 START_RETRY_DELAY_SEC_DEFAULT=4
 START_RETRY_COUNT="${SENDER_INSTALL_START_RETRY_COUNT:-$START_RETRY_COUNT_DEFAULT}"
 START_RETRY_DELAY_SEC="${SENDER_INSTALL_START_RETRY_DELAY_SEC:-$START_RETRY_DELAY_SEC_DEFAULT}"
-WSTUNNEL_IMAGE_DEFAULT="ghcr.io/erebe/wstunnel:latest"
-WSTUNNEL_IMAGE="${SENDER_INSTALL_WSTUNNEL_IMAGE:-$WSTUNNEL_IMAGE_DEFAULT}"
 WSTUNNEL_BINARY_PATH_DEFAULT="/usr/local/bin/wstunnel"
 WSTUNNEL_BINARY_PATH="${SENDER_INSTALL_WSTUNNEL_BINARY_PATH:-$WSTUNNEL_BINARY_PATH_DEFAULT}"
 WSTUNNEL_VERSION_DEFAULT="10.5.2"
@@ -38,7 +36,6 @@ Environment overrides:
   SENDER_INSTALL_REBOOT_POLICY
   SENDER_INSTALL_START_RETRY_COUNT
   SENDER_INSTALL_START_RETRY_DELAY_SEC
-  SENDER_INSTALL_WSTUNNEL_IMAGE
   SENDER_INSTALL_WSTUNNEL_BINARY_PATH
   SENDER_INSTALL_WSTUNNEL_VERSION
 EOF
@@ -134,52 +131,6 @@ WRAP
     rm -f "$tmp_file" >/dev/null 2>&1
     echo -en "[  \e[32mOK\e[0m  ] "
     echo "Installed wrapper $wrapper_path -> $delegate_path"
-    return 0
-}
-
-install_wstunnel_binary_from_image() {
-    local container_id=""
-    local tmp_file=""
-
-    container_id="$(docker create "$WSTUNNEL_IMAGE")" || {
-        echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "Failed to create container from $WSTUNNEL_IMAGE for wstunnel install."
-        return 1
-    }
-
-    tmp_file="$(mktemp /tmp/upri-wstunnel.XXXXXX)" || {
-        docker rm -f "$container_id" >/dev/null 2>&1 || true
-        echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "Failed to allocate temp file for wstunnel install."
-        return 1
-    }
-
-    if ! docker cp "${container_id}:/home/app/wstunnel" "$tmp_file" >/dev/null 2>&1; then
-        rm -f "$tmp_file" >/dev/null 2>&1
-        docker rm -f "$container_id" >/dev/null 2>&1 || true
-        echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "Failed to extract /home/app/wstunnel from $WSTUNNEL_IMAGE."
-        return 1
-    fi
-
-    docker rm -f "$container_id" >/dev/null 2>&1 || true
-
-    if ! sudo install -m 0755 "$tmp_file" "$WSTUNNEL_BINARY_PATH"; then
-        rm -f "$tmp_file" >/dev/null 2>&1
-        echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "Failed to install wstunnel to $WSTUNNEL_BINARY_PATH."
-        return 1
-    fi
-
-    rm -f "$tmp_file" >/dev/null 2>&1
-    if ! "$WSTUNNEL_BINARY_PATH" --version >/dev/null 2>&1; then
-        echo -en "[\e[1;31mFAILED\e[0m] "
-        echo "wstunnel installed but version check failed at $WSTUNNEL_BINARY_PATH."
-        return 1
-    fi
-
-    echo -en "[  \e[32mOK\e[0m  ] "
-    echo "Installed wstunnel at $WSTUNNEL_BINARY_PATH from $WSTUNNEL_IMAGE."
     return 0
 }
 
@@ -280,20 +231,21 @@ install_wstunnel_binary_from_release() {
 
 ensure_wstunnel_installed() {
     local current_wstunnel
+    local installed_version=""
+    local expected_version=""
+
+    expected_version="${WSTUNNEL_VERSION#v}"
     current_wstunnel="$(command -v wstunnel 2>/dev/null || true)"
 
     if [[ -n "$current_wstunnel" ]] && "$current_wstunnel" --version >/dev/null 2>&1; then
-        echo -en "[  \e[32mOK\e[0m  ] "
-        echo "wstunnel already installed at $current_wstunnel."
-        return 0
-    fi
-
-    if command -v docker >/dev/null 2>&1; then
-        if install_wstunnel_binary_from_image; then
+        installed_version="$("$current_wstunnel" --version 2>/dev/null | awk 'NR==1 {print $2}')"
+        if [[ "$installed_version" == "$expected_version" ]]; then
+            echo -en "[  \e[32mOK\e[0m  ] "
+            echo "wstunnel v$installed_version already installed at $current_wstunnel."
             return 0
         fi
         echo -en "[\e[1;33mWARN\e[0m] "
-        echo "Falling back to GitHub release install for wstunnel."
+        echo "wstunnel version mismatch (found: ${installed_version:-unknown}, expected: $expected_version). Reinstalling."
     fi
 
     install_wstunnel_binary_from_release
