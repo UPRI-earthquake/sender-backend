@@ -78,6 +78,7 @@ REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT=15
 REMOTE_TUNNEL_WSS_URL_DEFAULT=""
 REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT=""
 AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT="true"
+AUTO_UPDATE_PRUNE_DANGLING_IMAGES_DEFAULT="true"
 LAST_PULL_RESULT="unknown"
 AUTO_UPDATE_STATE_FILE_DEFAULT="/var/lib/upri-sender/update-state.json"
 AUTO_UPDATE_STATE_FILE="${AUTO_UPDATE_STATE_FILE:-$AUTO_UPDATE_STATE_FILE_DEFAULT}"
@@ -100,6 +101,7 @@ REMOTE_TUNNEL_ENV_FILE="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAUL
 REMOTE_TUNNEL_STATE_FILE="${REMOTE_TUNNEL_STATE_FILE:-$REMOTE_TUNNEL_STATE_FILE_DEFAULT}"
 REMOTE_TUNNEL_PID_FILE="${REMOTE_TUNNEL_PID_FILE:-$REMOTE_TUNNEL_PID_FILE_DEFAULT}"
 AUTO_UPDATE_ROLLBACK_ENABLED="${AUTO_UPDATE_ROLLBACK_ENABLED:-$AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT}"
+AUTO_UPDATE_PRUNE_DANGLING_IMAGES="${AUTO_UPDATE_PRUNE_DANGLING_IMAGES:-$AUTO_UPDATE_PRUNE_DANGLING_IMAGES_DEFAULT}"
 
 SENDER_SCRIPT_AUTO_UPDATE_ENABLED_DEFAULT="deprecated"
 SENDER_BACKEND_SCRIPT_URL_DEFAULT="deprecated"
@@ -299,6 +301,50 @@ function get_container_repo_digest() {
 
     digest_ref="$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$image_id" 2>/dev/null | awk -v repo="$repo" '$0 ~ "^" repo "@sha256:" {print; exit}')"
     printf "%s" "$digest_ref"
+}
+
+function cleanup_dangling_images_compatible() {
+    local dangling_ids=""
+    local image_id=""
+    local removed_count=0
+    local failed_count=0
+
+    if ! is_truthy "$AUTO_UPDATE_PRUNE_DANGLING_IMAGES"; then
+        return 0
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Docker CLI not found; skipping dangling image cleanup."
+        return 0
+    fi
+
+    # Use docker versions compatible with older RShake hosts (no `docker image prune` required).
+    dangling_ids="$(docker images -f dangling=true -q 2>/dev/null | awk 'NF' | sort -u)"
+    if [[ -z "$dangling_ids" ]]; then
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "No dangling Docker images to clean."
+        return 0
+    fi
+
+    while IFS= read -r image_id; do
+        [[ -n "$image_id" ]] || continue
+        if docker rmi "$image_id" >/dev/null 2>&1; then
+            removed_count=$((removed_count + 1))
+        else
+            failed_count=$((failed_count + 1))
+        fi
+    done <<< "$dangling_ids"
+
+    if [[ $failed_count -gt 0 ]]; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Dangling image cleanup removed $removed_count image(s); $failed_count could not be removed."
+    else
+        echo -en "[  \e[32mOK\e[0m  ] "
+        echo "Dangling image cleanup removed $removed_count image(s)."
+    fi
+
+    return 0
 }
 
 function install_data_payload() {
@@ -2435,6 +2481,8 @@ function update_stack_with_alert() {
     if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
         return 1
     fi
+
+    cleanup_dangling_images_compatible || true
     return 0
 }
 
@@ -2500,6 +2548,11 @@ function update_container_with_state() {
         "unknown" \
         "$LAST_SCRIPT_SYNC_RESULT" \
         "$LAST_ALERT_POST_RESULT"
+
+    if [[ $backend_exit -eq 0 ]]; then
+        cleanup_dangling_images_compatible || true
+    fi
+
     return "$backend_exit"
 }
 
