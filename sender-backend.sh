@@ -80,6 +80,7 @@ REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT=""
 REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT=15
 REMOTE_TUNNEL_WSS_URL_DEFAULT=""
 REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT=""
+REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_DEFAULT=""
 AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT="true"
 AUTO_UPDATE_PRUNE_DANGLING_IMAGES_DEFAULT="true"
 LAST_PULL_RESULT="unknown"
@@ -154,6 +155,7 @@ REMOTE_TUNNEL_ENROLL_TOKEN_VALUE="$REMOTE_TUNNEL_ENROLL_TOKEN_DEFAULT"
 REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE="$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT"
 REMOTE_TUNNEL_WSS_URL_VALUE="$REMOTE_TUNNEL_WSS_URL_DEFAULT"
 REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="$REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT"
+REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE="$REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_DEFAULT"
 WATCHDOG_BACKEND_STOPPED_SINCE=0
 WATCHDOG_FRONTEND_STOPPED_SINCE=0
 WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
@@ -457,6 +459,7 @@ function load_remote_tunnel_env() {
     REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE="$(normalize_positive_int "${REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC:-$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT}" "$REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT" 5)"
     REMOTE_TUNNEL_WSS_URL_VALUE="${REMOTE_TUNNEL_WSS_URL:-$REMOTE_TUNNEL_WSS_URL_DEFAULT}"
     REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT}"
+    REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE="${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY:-$REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_DEFAULT}"
     REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE#/}"
     REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE%/}"
 
@@ -554,6 +557,7 @@ function persist_remote_tunnel_env() {
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC" "${REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_WSS_URL" "${REMOTE_TUNNEL_WSS_URL_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_WSS_PATH_PREFIX" "${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY" "${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE:-}"
     } > "$tmp_file"
 
     if ! install_data_payload "$tmp_file" "$env_file" 0600; then
@@ -599,6 +603,84 @@ function remote_tunnel_apply_runtime_permissions() {
         chown "$service_user:$service_group" "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" >/dev/null 2>&1 || true
         chmod 0644 "${REMOTE_TUNNEL_KEY_PATH_VALUE}.pub" >/dev/null 2>&1 || true
     fi
+    return 0
+}
+
+function remote_tunnel_provision_operator_key() {
+    local operator_key_raw="${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE:-}"
+    local operator_key
+    local key_type
+    local key_blob
+    local service_user="${REMOTE_TUNNEL_SERVICE_USER:-myshake}"
+    local service_group
+    local user_home
+    local ssh_dir
+    local auth_keys
+    local marker="upri-remote-actions-operator"
+    local forced_command="/usr/local/bin/sender-backend REMOTE_ACTION_DISPATCH"
+    local forced_entry
+    local tmp_file
+    local line
+
+    operator_key="$(printf '%s' "$operator_key_raw" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    if [[ -z "$operator_key" ]]; then
+        return 0
+    fi
+
+    key_type="$(printf '%s\n' "$operator_key" | awk '{print $1}')"
+    key_blob="$(printf '%s\n' "$operator_key" | awk '{print $2}')"
+
+    if [[ -z "$key_type" || -z "$key_blob" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY is invalid."
+        return 1
+    fi
+
+    if ! id -u "$service_user" >/dev/null 2>&1; then
+        remote_tunnel_config_error "Remote tunnel service user does not exist: $service_user"
+        return 1
+    fi
+
+    service_group="$(id -gn "$service_user" 2>/dev/null || echo "$service_user")"
+    user_home="$(getent passwd "$service_user" | cut -d: -f6)"
+    if [[ -z "$user_home" ]]; then
+        remote_tunnel_config_error "Unable to resolve home for remote tunnel service user: $service_user"
+        return 1
+    fi
+
+    ssh_dir="${user_home}/.ssh"
+    auth_keys="${ssh_dir}/authorized_keys"
+    mkdir -p "$ssh_dir" >/dev/null 2>&1 || true
+    touch "$auth_keys" >/dev/null 2>&1 || true
+
+    chown "$service_user:$service_group" "$ssh_dir" "$auth_keys" >/dev/null 2>&1 || true
+    chmod 0700 "$ssh_dir" >/dev/null 2>&1 || true
+    chmod 0600 "$auth_keys" >/dev/null 2>&1 || true
+
+    forced_entry="command=\"${forced_command}\",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding ${key_type} ${key_blob} ${marker}"
+    tmp_file="$(mktemp "/tmp/upri-remote-action-authkeys.XXXXXX")" || return 1
+
+    if [[ -f "$auth_keys" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if printf '%s' "$line" | grep -Fq "$marker"; then
+                continue
+            fi
+            if [[ -n "$key_blob" ]] && printf '%s' "$line" | grep -Fq "$key_blob"; then
+                continue
+            fi
+            printf '%s\n' "$line" >> "$tmp_file"
+        done < "$auth_keys"
+    fi
+
+    printf '%s\n' "$forced_entry" >> "$tmp_file"
+    if ! install_data_payload "$tmp_file" "$auth_keys" 0600; then
+        rm -f "$tmp_file" >/dev/null 2>&1 || true
+        remote_tunnel_config_error "Failed to install remote action operator key into ${auth_keys}"
+        return 1
+    fi
+    rm -f "$tmp_file" >/dev/null 2>&1 || true
+
+    chown "$service_user:$service_group" "$auth_keys" >/dev/null 2>&1 || true
+    chmod 0600 "$auth_keys" >/dev/null 2>&1 || true
     return 0
 }
 
@@ -671,6 +753,7 @@ function remote_tunnel_attempt_auto_register() {
     local remote_port_value
     local response_wss_url
     local response_wss_path_prefix
+    local response_operator_public_key
 
     if ! is_truthy "$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE"; then
         return 0
@@ -745,6 +828,7 @@ function remote_tunnel_attempt_auto_register() {
     remote_port_value="$(remote_tunnel_extract_json_number "$response_body" "REMOTE_TUNNEL_REMOTE_PORT")"
     response_wss_url="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_WSS_URL")"
     response_wss_path_prefix="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_WSS_PATH_PREFIX")"
+    response_operator_public_key="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY")"
     response_wss_path_prefix="${response_wss_path_prefix#/}"
     response_wss_path_prefix="${response_wss_path_prefix%/}"
 
@@ -760,9 +844,13 @@ function remote_tunnel_attempt_auto_register() {
     if [[ -n "$response_wss_path_prefix" ]]; then
         REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="$response_wss_path_prefix"
     fi
+    if [[ -n "$response_operator_public_key" ]]; then
+        REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE="$response_operator_public_key"
+    fi
     REMOTE_TUNNEL_ENABLED_VALUE="true"
 
     persist_remote_tunnel_env || return 1
+    remote_tunnel_provision_operator_key || return 1
 
     echo -en "[  \e[32mOK\e[0m  ] "
     echo "Remote tunnel auto-registration succeeded (device=$REMOTE_TUNNEL_DEVICE_ID_VALUE port=$REMOTE_TUNNEL_REMOTE_PORT_VALUE)."
@@ -972,6 +1060,11 @@ function remote_tunnel_status() {
     echo "Key path: ${REMOTE_TUNNEL_KEY_PATH_VALUE:-unset}"
     echo "WSS URL: ${REMOTE_TUNNEL_WSS_URL_VALUE:-unset}"
     echo "WSS path prefix: ${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE:-unset}"
+    if [[ -n "${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE:-}" ]]; then
+        echo "Remote action operator key: set"
+    else
+        echo "Remote action operator key: unset"
+    fi
     echo "Auto-register enabled: ${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE:-false}"
     echo "Enrollment endpoint: ${REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE:-unset}"
     echo "Enrollment token: $token_state"
@@ -991,6 +1084,257 @@ function remote_tunnel_status() {
         echo '{"connected":false,"lastError":"remote tunnel state not found"}'
     fi
     return 0
+}
+
+function remote_action_decode_base64() {
+    local encoded="$1"
+    local decoded=""
+
+    if decoded="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null)"; then
+        printf '%s' "$decoded"
+        return 0
+    fi
+    if decoded="$(printf '%s' "$encoded" | base64 -d 2>/dev/null)"; then
+        printf '%s' "$decoded"
+        return 0
+    fi
+    return 1
+}
+
+function remote_action_emit_result() {
+    local ok="$1"
+    local code="$2"
+    local message="$3"
+    local action="${4:-}"
+    local http_status="${5:-0}"
+
+    printf 'REMOTE_ACTION_RESULT={"ok":%s,"code":"%s","message":"%s","action":"%s","httpStatus":%s}\n' \
+        "$ok" \
+        "$(json_escape "$code")" \
+        "$(json_escape "$message")" \
+        "$(json_escape "$action")" \
+        "$http_status"
+}
+
+function remote_action_request_sender_backend() {
+    local target_path="$1"
+    local request_body="$2"
+    local timeout_sec="${REMOTE_ACTION_TIMEOUT_SEC:-20}"
+    local timeout_ms=20000
+    local body_b64=""
+    local output=""
+    local exit_code=0
+    local node_script=""
+
+    REMOTE_ACTION_HTTP_STATUS=""
+    REMOTE_ACTION_HTTP_BODY=""
+    REMOTE_ACTION_REQUEST_ERROR=""
+
+    if ! command -v docker >/dev/null 2>&1; then
+        REMOTE_ACTION_REQUEST_ERROR="docker command is unavailable on host."
+        return 1
+    fi
+
+    if ! [[ "$timeout_sec" =~ ^[0-9]+$ ]] || (( timeout_sec < 1 )); then
+        timeout_sec=20
+    fi
+    timeout_ms=$((timeout_sec * 1000))
+    body_b64="$(printf '%s' "$request_body" | base64 | tr -d '\r\n')"
+
+    read -r -d '' node_script <<'EOF_NODE' || true
+const http = require('http');
+
+const path = process.env.REMOTE_ACTION_PATH || '/';
+const bodyB64 = process.env.REMOTE_ACTION_BODY_B64 || '';
+const timeoutMs = Number(process.env.REMOTE_ACTION_TIMEOUT_MS || '20000');
+const backendPort = Number(process.env.REMOTE_ACTION_BACKEND_PORT || '5001');
+let body = '{}';
+
+try {
+  body = Buffer.from(bodyB64, 'base64').toString('utf8');
+} catch (_error) {
+  process.stdout.write(`REQUEST_ERROR_B64=${Buffer.from('invalid request payload', 'utf8').toString('base64')}\n`);
+  process.exit(2);
+}
+
+const req = http.request(
+  {
+    hostname: '127.0.0.1',
+    port: Number.isFinite(backendPort) && backendPort > 0 ? backendPort : 5001,
+    method: 'POST',
+    path,
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    },
+    timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 20000,
+  },
+  (res) => {
+    let raw = '';
+    res.on('data', (chunk) => {
+      raw += chunk;
+    });
+    res.on('end', () => {
+      process.stdout.write(`HTTP_STATUS=${res.statusCode}\n`);
+      process.stdout.write(`HTTP_BODY_B64=${Buffer.from(raw || '', 'utf8').toString('base64')}\n`);
+    });
+  },
+);
+
+req.on('timeout', () => {
+  req.destroy(new Error('request timeout'));
+});
+
+req.on('error', (error) => {
+  process.stdout.write(`REQUEST_ERROR_B64=${Buffer.from(String(error && error.message ? error.message : 'request error'), 'utf8').toString('base64')}\n`);
+  process.exit(3);
+});
+
+req.write(body);
+req.end();
+EOF_NODE
+
+    output="$(docker exec \
+        -e REMOTE_ACTION_PATH="$target_path" \
+        -e REMOTE_ACTION_BODY_B64="$body_b64" \
+        -e REMOTE_ACTION_TIMEOUT_MS="$timeout_ms" \
+        -e REMOTE_ACTION_BACKEND_PORT="${BACKEND_PROD_PORT:-5001}" \
+        "$CONTAINER" node -e "$node_script" 2>/dev/null)" || exit_code=$?
+
+    REMOTE_ACTION_HTTP_STATUS="$(printf '%s\n' "$output" | sed -n 's/^HTTP_STATUS=//p' | tail -n 1)"
+    local response_body_b64
+    local request_error_b64
+    response_body_b64="$(printf '%s\n' "$output" | sed -n 's/^HTTP_BODY_B64=//p' | tail -n 1)"
+    request_error_b64="$(printf '%s\n' "$output" | sed -n 's/^REQUEST_ERROR_B64=//p' | tail -n 1)"
+
+    if [[ -n "$response_body_b64" ]]; then
+        REMOTE_ACTION_HTTP_BODY="$(remote_action_decode_base64 "$response_body_b64" || true)"
+    fi
+    if [[ -n "$request_error_b64" ]]; then
+        REMOTE_ACTION_REQUEST_ERROR="$(remote_action_decode_base64 "$request_error_b64" || true)"
+    fi
+
+    if [[ $exit_code -ne 0 ]]; then
+        if [[ -z "$REMOTE_ACTION_REQUEST_ERROR" ]]; then
+            REMOTE_ACTION_REQUEST_ERROR="docker exec request failed (exit ${exit_code})."
+        fi
+        return 1
+    fi
+
+    if [[ -z "$REMOTE_ACTION_HTTP_STATUS" ]]; then
+        REMOTE_ACTION_REQUEST_ERROR="${REMOTE_ACTION_REQUEST_ERROR:-missing HTTP status from local sender request.}"
+        return 1
+    fi
+    return 0
+}
+
+function remote_action_execute() {
+    local action_raw="${1:-}"
+    local payload_b64="${2:-}"
+    local action=""
+    local payload_json="{}"
+    local username=""
+    local password=""
+    local longitude=""
+    local latitude=""
+    local elevation=""
+    local institution_name=""
+    local url=""
+    local request_body="{}"
+    local request_path=""
+    local response_message=""
+    local status_code=0
+
+    action="$(printf '%s' "$action_raw" | tr '[:lower:]' '[:upper:]' | xargs)"
+    if [[ -z "$action" ]]; then
+        remote_action_emit_result "false" "invalid_action" "Missing action." "$action" 400
+        return 1
+    fi
+
+    if [[ -n "$payload_b64" ]]; then
+        if ! payload_json="$(remote_action_decode_base64 "$payload_b64")"; then
+            remote_action_emit_result "false" "invalid_payload" "Unable to decode remote action payload." "$action" 400
+            return 1
+        fi
+    fi
+
+    case "$action" in
+        "UNLINK")
+            request_path="/device/unlink"
+            request_body="{}"
+            ;;
+        "RELINK")
+            username="$(remote_tunnel_extract_json_string "$payload_json" "username")"
+            password="$(remote_tunnel_extract_json_string "$payload_json" "password")"
+            longitude="$(remote_tunnel_extract_json_string "$payload_json" "longitude")"
+            latitude="$(remote_tunnel_extract_json_string "$payload_json" "latitude")"
+            elevation="$(remote_tunnel_extract_json_string "$payload_json" "elevation")"
+            if [[ -z "$username" || -z "$password" || -z "$longitude" || -z "$latitude" || -z "$elevation" ]]; then
+                remote_action_emit_result "false" "invalid_payload" "Relink requires username, password, longitude, latitude, and elevation." "$action" 400
+                return 1
+            fi
+            request_path="/device/link"
+            request_body="{\"username\":\"$(json_escape "$username")\",\"password\":\"$(json_escape "$password")\",\"longitude\":\"$(json_escape "$longitude")\",\"latitude\":\"$(json_escape "$latitude")\",\"elevation\":\"$(json_escape "$elevation")\"}"
+            ;;
+        "ADD_SERVER")
+            institution_name="$(remote_tunnel_extract_json_string "$payload_json" "institutionName")"
+            url="$(remote_tunnel_extract_json_string "$payload_json" "url")"
+            if [[ -z "$institution_name" || -z "$url" ]]; then
+                remote_action_emit_result "false" "invalid_payload" "Add server requires institutionName and url." "$action" 400
+                return 1
+            fi
+            request_path="/servers/add"
+            request_body="{\"institutionName\":\"$(json_escape "$institution_name")\",\"url\":\"$(json_escape "$url")\"}"
+            ;;
+        *)
+            remote_action_emit_result "false" "unsupported_action" "Unsupported remote action." "$action" 400
+            return 1
+            ;;
+    esac
+
+    if ! remote_action_request_sender_backend "$request_path" "$request_body"; then
+        remote_action_emit_result "false" "request_failed" "${REMOTE_ACTION_REQUEST_ERROR:-Failed to execute local sender request.}" "$action" 502
+        return 1
+    fi
+
+    status_code="$REMOTE_ACTION_HTTP_STATUS"
+    response_message="$(remote_tunnel_extract_json_string "${REMOTE_ACTION_HTTP_BODY:-}" "message")"
+    if [[ -z "$response_message" ]]; then
+        response_message="Remote action processed."
+    fi
+
+    if [[ "$status_code" =~ ^2[0-9][0-9]$ ]]; then
+        remote_action_emit_result "true" "success" "$response_message" "$action" "$status_code"
+        return 0
+    fi
+
+    remote_action_emit_result "false" "remote_failed" "$response_message" "$action" "$status_code"
+    return 1
+}
+
+function remote_action_dispatch() {
+    local original_command="${SSH_ORIGINAL_COMMAND:-}"
+    local command_name=""
+    local action=""
+    local payload_b64=""
+    local extra=""
+
+    if [[ -z "$original_command" ]]; then
+        remote_action_emit_result "false" "invalid_command" "Missing SSH_ORIGINAL_COMMAND for remote action dispatch." "" 400
+        return 1
+    fi
+
+    read -r command_name action payload_b64 extra <<< "$original_command"
+    if [[ "$command_name" != "REMOTE_ACTION_EXECUTE" ]]; then
+        remote_action_emit_result "false" "invalid_command" "Unsupported remote command." "" 400
+        return 1
+    fi
+    if [[ -n "$extra" ]]; then
+        remote_action_emit_result "false" "invalid_command" "Unexpected remote command arguments." "" 400
+        return 1
+    fi
+
+    remote_action_execute "$action" "$payload_b64"
 }
 
 function resolve_state_file_path() {
@@ -3249,6 +3593,7 @@ REMOTE_TUNNEL_ENROLL_TOKEN=
 REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC=15
 REMOTE_TUNNEL_WSS_URL=
 REMOTE_TUNNEL_WSS_PATH_PREFIX=
+REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY=
 EOF
 
     if install_data_payload "$tmp_file" "$env_file" 0640; then
@@ -3305,8 +3650,10 @@ EOF
 
     load_remote_tunnel_env
     remote_tunnel_apply_runtime_permissions || true
+    remote_tunnel_provision_operator_key || true
     remote_tunnel_attempt_auto_register || true
     remote_tunnel_apply_runtime_permissions || true
+    remote_tunnel_provision_operator_key || true
     load_remote_tunnel_env
     remote_tunnel_validate_config
     case $? in
@@ -3945,7 +4292,13 @@ case $1 in
     "REMOTE_TUNNEL_STATUS")
         remote_tunnel_status
         ;;
+    "REMOTE_ACTION_EXECUTE")
+        remote_action_execute "$2" "$3"
+        ;;
+    "REMOTE_ACTION_DISPATCH")
+        remote_action_dispatch
+        ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|INSTALL_WATCHDOG_TIMER|INSTALL_REMOTE_TUNNEL_SERVICE|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|WATCHDOG_CHECK|REMOTE_TUNNEL_START|REMOTE_TUNNEL_STOP|REMOTE_TUNNEL_STATUS|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER|UNINSTALL_WATCHDOG_TIMER|UNINSTALL_REMOTE_TUNNEL_SERVICE]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|INSTALL_WATCHDOG_TIMER|INSTALL_REMOTE_TUNNEL_SERVICE|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|WATCHDOG_CHECK|REMOTE_TUNNEL_START|REMOTE_TUNNEL_STOP|REMOTE_TUNNEL_STATUS|REMOTE_ACTION_EXECUTE <UNLINK|RELINK|ADD_SERVER> [payload-b64]|REMOTE_ACTION_DISPATCH|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER|UNINSTALL_WATCHDOG_TIMER|UNINSTALL_REMOTE_TUNNEL_SERVICE]"
         ;;
 esac
