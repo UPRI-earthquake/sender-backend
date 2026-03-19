@@ -66,6 +66,9 @@ WATCHDOG_FRONTEND_STOPPED_MAX_SEC_DEFAULT=900
 WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC_DEFAULT=900
 WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC_DEFAULT=900
 WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT=300
+WATCHDOG_REMOTE_TUNNEL_ENABLED_DEFAULT="true"
+WATCHDOG_REMOTE_TUNNEL_SERVICE_DOWN_MAX_SEC_DEFAULT=300
+WATCHDOG_REMOTE_TUNNEL_DISCONNECTED_MAX_SEC_DEFAULT=900
 WATCHDOG_STATE_FILE_DEFAULT="/var/lib/upri-sender/watchdog-state.env"
 WATCHDOG_LOCK_FILE_DEFAULT="/tmp/upri-sender-maintenance.lock"
 REMOTE_TUNNEL_ENV_FILE_DEFAULT="/etc/upri/sender-remote-tunnel.env"
@@ -95,6 +98,9 @@ WATCHDOG_FRONTEND_STOPPED_MAX_SEC="${WATCHDOG_FRONTEND_STOPPED_MAX_SEC:-$WATCHDO
 WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC="${WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC:-$WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC_DEFAULT}"
 WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC="${WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC:-$WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC_DEFAULT}"
 WATCHDOG_RESTART_COOLDOWN_SEC="${WATCHDOG_RESTART_COOLDOWN_SEC:-$WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT}"
+WATCHDOG_REMOTE_TUNNEL_ENABLED="${WATCHDOG_REMOTE_TUNNEL_ENABLED:-$WATCHDOG_REMOTE_TUNNEL_ENABLED_DEFAULT}"
+WATCHDOG_REMOTE_TUNNEL_SERVICE_DOWN_MAX_SEC="${WATCHDOG_REMOTE_TUNNEL_SERVICE_DOWN_MAX_SEC:-$WATCHDOG_REMOTE_TUNNEL_SERVICE_DOWN_MAX_SEC_DEFAULT}"
+WATCHDOG_REMOTE_TUNNEL_DISCONNECTED_MAX_SEC="${WATCHDOG_REMOTE_TUNNEL_DISCONNECTED_MAX_SEC:-$WATCHDOG_REMOTE_TUNNEL_DISCONNECTED_MAX_SEC_DEFAULT}"
 WATCHDOG_STATE_FILE="${WATCHDOG_STATE_FILE:-$WATCHDOG_STATE_FILE_DEFAULT}"
 WATCHDOG_LOCK_FILE="${WATCHDOG_LOCK_FILE:-$WATCHDOG_LOCK_FILE_DEFAULT}"
 REMOTE_TUNNEL_ENV_FILE="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
@@ -154,6 +160,9 @@ WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
 WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
 WATCHDOG_BACKEND_LAST_RESTART_TS=0
 WATCHDOG_FRONTEND_LAST_RESTART_TS=0
+WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE=0
+WATCHDOG_TUNNEL_DISCONNECTED_SINCE=0
+WATCHDOG_TUNNEL_LAST_RESTART_TS=0
 LAST_ROLLBACK_RESULT="not-run"
 LAST_ROLLBACK_BACKEND_EXIT=0
 LAST_ROLLBACK_FRONTEND_EXIT=0
@@ -1421,6 +1430,9 @@ function load_watchdog_state() {
     WATCHDOG_FRONTEND_UNHEALTHY_SINCE=0
     WATCHDOG_BACKEND_LAST_RESTART_TS=0
     WATCHDOG_FRONTEND_LAST_RESTART_TS=0
+    WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE=0
+    WATCHDOG_TUNNEL_DISCONNECTED_SINCE=0
+    WATCHDOG_TUNNEL_LAST_RESTART_TS=0
 
     state_path="$(resolve_watchdog_state_file_path)"
     WATCHDOG_STATE_FILE_PATH="$state_path"
@@ -1449,6 +1461,15 @@ function load_watchdog_state() {
             WATCHDOG_FRONTEND_LAST_RESTART_TS)
                 if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_FRONTEND_LAST_RESTART_TS="$value"; fi
                 ;;
+            WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE="$value"; fi
+                ;;
+            WATCHDOG_TUNNEL_DISCONNECTED_SINCE)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_TUNNEL_DISCONNECTED_SINCE="$value"; fi
+                ;;
+            WATCHDOG_TUNNEL_LAST_RESTART_TS)
+                if [[ "$value" =~ ^[0-9]+$ ]]; then WATCHDOG_TUNNEL_LAST_RESTART_TS="$value"; fi
+                ;;
         esac
     done < "$state_path"
 }
@@ -1467,6 +1488,9 @@ WATCHDOG_BACKEND_UNHEALTHY_SINCE=$WATCHDOG_BACKEND_UNHEALTHY_SINCE
 WATCHDOG_FRONTEND_UNHEALTHY_SINCE=$WATCHDOG_FRONTEND_UNHEALTHY_SINCE
 WATCHDOG_BACKEND_LAST_RESTART_TS=$WATCHDOG_BACKEND_LAST_RESTART_TS
 WATCHDOG_FRONTEND_LAST_RESTART_TS=$WATCHDOG_FRONTEND_LAST_RESTART_TS
+WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE=$WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE
+WATCHDOG_TUNNEL_DISCONNECTED_SINCE=$WATCHDOG_TUNNEL_DISCONNECTED_SINCE
+WATCHDOG_TUNNEL_LAST_RESTART_TS=$WATCHDOG_TUNNEL_LAST_RESTART_TS
 EOF
 
     if ! install_data_payload "$tmp_file" "$state_path" 0644; then
@@ -1676,6 +1700,154 @@ function attempt_frontend_watchdog_recovery() {
     return 0
 }
 
+function reset_remote_tunnel_watchdog_state() {
+    WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE=0
+    WATCHDOG_TUNNEL_DISCONNECTED_SINCE=0
+}
+
+function remote_tunnel_watchdog_connected_state() {
+    local state_path
+    local state_body
+
+    state_path="$(resolve_remote_tunnel_state_file_path)"
+    REMOTE_TUNNEL_STATE_FILE_PATH="$state_path"
+    if [[ ! -r "$state_path" ]]; then
+        printf "unknown"
+        return 0
+    fi
+
+    state_body="$(tr -d '\r\n' < "$state_path" 2>/dev/null || true)"
+    if [[ "$state_body" =~ \"connected\"[[:space:]]*:[[:space:]]*true ]]; then
+        printf "true"
+        return 0
+    fi
+    if [[ "$state_body" =~ \"connected\"[[:space:]]*:[[:space:]]*false ]]; then
+        printf "false"
+        return 0
+    fi
+
+    printf "unknown"
+    return 0
+}
+
+function attempt_remote_tunnel_watchdog_recovery() {
+    local pid=""
+
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl restart "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1; then
+            return 0
+        fi
+        if command -v sudo >/dev/null 2>&1 && sudo -n systemctl restart "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    if [[ -r "$REMOTE_TUNNEL_PID_FILE" ]]; then
+        pid="$(head -n 1 "$REMOTE_TUNNEL_PID_FILE" | tr -d '\r' | xargs)"
+        if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
+            if kill "$pid" >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+function evaluate_remote_tunnel_watchdog() {
+    local now_epoch="$1"
+    local service_down_threshold_sec="$2"
+    local disconnected_threshold_sec="$3"
+    local restart_cooldown_sec="$4"
+    local active_state
+    local connected_state
+    local elapsed
+    local component_name="$REMOTE_TUNNEL_SERVICE"
+
+    if ! is_truthy "$WATCHDOG_REMOTE_TUNNEL_ENABLED"; then
+        reset_remote_tunnel_watchdog_state
+        return 0
+    fi
+
+    load_remote_tunnel_env
+    if ! is_truthy "$REMOTE_TUNNEL_ENABLED_VALUE"; then
+        reset_remote_tunnel_watchdog_state
+        return 0
+    fi
+    if ! remote_tunnel_config_is_complete; then
+        reset_remote_tunnel_watchdog_state
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        reset_remote_tunnel_watchdog_state
+        return 0
+    fi
+
+    active_state="$(systemctl is-active "$REMOTE_TUNNEL_SERVICE" 2>/dev/null || true)"
+    if [[ -z "$active_state" ]]; then
+        reset_remote_tunnel_watchdog_state
+        return 0
+    fi
+
+    if [[ "$active_state" != "active" ]]; then
+        if (( WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE == 0 )); then
+            WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE="$now_epoch"
+            WATCHDOG_TUNNEL_DISCONNECTED_SINCE=0
+            return 0
+        fi
+
+        elapsed=$((now_epoch - WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE))
+        if (( elapsed < service_down_threshold_sec )); then
+            return 0
+        fi
+        if ! can_attempt_watchdog_restart "$WATCHDOG_TUNNEL_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+            return 0
+        fi
+
+        if attempt_remote_tunnel_watchdog_recovery; then
+            post_watchdog_alert "WATCHDOG_TUNNEL_RECOVERED" "info" "Watchdog restarted sender remote tunnel service." "device.recovery" "Recovered" "$component_name" "service-inactive" "restart-success" "$elapsed" "$service_down_threshold_sec" "$restart_cooldown_sec"
+            reset_remote_tunnel_watchdog_state
+        else
+            post_watchdog_alert "WATCHDOG_TUNNEL_RECOVERY_FAILED" "warning" "Watchdog failed to restart sender remote tunnel service." "device.alert" "Error" "$component_name" "service-inactive" "restart-failed" "$elapsed" "$service_down_threshold_sec" "$restart_cooldown_sec"
+        fi
+        WATCHDOG_TUNNEL_LAST_RESTART_TS="$now_epoch"
+        return 0
+    fi
+
+    WATCHDOG_TUNNEL_SERVICE_DOWN_SINCE=0
+    connected_state="$(remote_tunnel_watchdog_connected_state)"
+    if [[ "$connected_state" == "unknown" ]]; then
+        WATCHDOG_TUNNEL_DISCONNECTED_SINCE=0
+        return 0
+    fi
+    if [[ "$connected_state" == "true" ]]; then
+        WATCHDOG_TUNNEL_DISCONNECTED_SINCE=0
+        return 0
+    fi
+
+    if (( WATCHDOG_TUNNEL_DISCONNECTED_SINCE == 0 )); then
+        WATCHDOG_TUNNEL_DISCONNECTED_SINCE="$now_epoch"
+        return 0
+    fi
+
+    elapsed=$((now_epoch - WATCHDOG_TUNNEL_DISCONNECTED_SINCE))
+    if (( elapsed < disconnected_threshold_sec )); then
+        return 0
+    fi
+    if ! can_attempt_watchdog_restart "$WATCHDOG_TUNNEL_LAST_RESTART_TS" "$now_epoch" "$restart_cooldown_sec"; then
+        return 0
+    fi
+
+    if attempt_remote_tunnel_watchdog_recovery; then
+        post_watchdog_alert "WATCHDOG_TUNNEL_RECOVERED" "info" "Watchdog restarted disconnected sender remote tunnel service." "device.recovery" "Recovered" "$component_name" "tunnel-disconnected" "restart-success" "$elapsed" "$disconnected_threshold_sec" "$restart_cooldown_sec"
+        reset_remote_tunnel_watchdog_state
+    else
+        post_watchdog_alert "WATCHDOG_TUNNEL_RECOVERY_FAILED" "warning" "Watchdog failed to restart disconnected sender remote tunnel service." "device.alert" "Error" "$component_name" "tunnel-disconnected" "restart-failed" "$elapsed" "$disconnected_threshold_sec" "$restart_cooldown_sec"
+    fi
+    WATCHDOG_TUNNEL_LAST_RESTART_TS="$now_epoch"
+    return 0
+}
+
 function evaluate_backend_watchdog() {
     local now_epoch="$1"
     local stopped_threshold_sec="$2"
@@ -1851,6 +2023,8 @@ function watchdog_check() {
     local stopped_frontend_threshold
     local unhealthy_backend_threshold
     local unhealthy_frontend_threshold
+    local tunnel_service_down_threshold
+    local tunnel_disconnected_threshold
     local restart_cooldown_sec
 
     if ! is_truthy "$WATCHDOG_ENABLED"; then
@@ -1863,12 +2037,15 @@ function watchdog_check() {
     stopped_frontend_threshold="$(normalize_positive_int "$WATCHDOG_FRONTEND_STOPPED_MAX_SEC" "$WATCHDOG_FRONTEND_STOPPED_MAX_SEC_DEFAULT" 30)"
     unhealthy_backend_threshold="$(normalize_positive_int "$WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC" "$WATCHDOG_BACKEND_UNHEALTHY_MAX_SEC_DEFAULT" 30)"
     unhealthy_frontend_threshold="$(normalize_positive_int "$WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC" "$WATCHDOG_FRONTEND_UNHEALTHY_MAX_SEC_DEFAULT" 30)"
+    tunnel_service_down_threshold="$(normalize_positive_int "$WATCHDOG_REMOTE_TUNNEL_SERVICE_DOWN_MAX_SEC" "$WATCHDOG_REMOTE_TUNNEL_SERVICE_DOWN_MAX_SEC_DEFAULT" 30)"
+    tunnel_disconnected_threshold="$(normalize_positive_int "$WATCHDOG_REMOTE_TUNNEL_DISCONNECTED_MAX_SEC" "$WATCHDOG_REMOTE_TUNNEL_DISCONNECTED_MAX_SEC_DEFAULT" 30)"
     restart_cooldown_sec="$(normalize_positive_int "$WATCHDOG_RESTART_COOLDOWN_SEC" "$WATCHDOG_RESTART_COOLDOWN_SEC_DEFAULT" 30)"
 
     now_epoch="$(date +%s)"
     load_watchdog_state
     evaluate_backend_watchdog "$now_epoch" "$stopped_backend_threshold" "$unhealthy_backend_threshold" "$restart_cooldown_sec"
     evaluate_frontend_watchdog "$now_epoch" "$stopped_frontend_threshold" "$unhealthy_frontend_threshold" "$restart_cooldown_sec"
+    evaluate_remote_tunnel_watchdog "$now_epoch" "$tunnel_service_down_threshold" "$tunnel_disconnected_threshold" "$restart_cooldown_sec"
     write_watchdog_state || true
     return 0
 }
