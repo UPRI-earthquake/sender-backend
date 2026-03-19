@@ -1306,13 +1306,18 @@ if (method === 'POST') {
 req.end();
 EOF_NODE
 
-    output="$(docker exec \
-        -e REMOTE_ACTION_PATH="$target_path" \
-        -e REMOTE_ACTION_BODY_B64="$body_b64" \
-        -e REMOTE_ACTION_METHOD="$request_method" \
-        -e REMOTE_ACTION_TIMEOUT_MS="$timeout_ms" \
-        -e REMOTE_ACTION_BACKEND_PORT="${BACKEND_PROD_PORT:-5001}" \
-        "$CONTAINER" node -e "$node_script" 2>/dev/null)" || exit_code=$?
+    # Some Docker builds on RShake hosts do not support `docker exec -e`.
+    # Use positional args + inline env assignment inside `sh -c` for compatibility.
+    output="$(
+        printf '%s' "$node_script" | docker exec -i "$CONTAINER" sh -c '
+            REMOTE_ACTION_PATH="$1" \
+            REMOTE_ACTION_BODY_B64="$2" \
+            REMOTE_ACTION_METHOD="$3" \
+            REMOTE_ACTION_TIMEOUT_MS="$4" \
+            REMOTE_ACTION_BACKEND_PORT="$5" \
+            node -
+        ' sh "$target_path" "$body_b64" "$request_method" "$timeout_ms" "${BACKEND_PROD_PORT:-5001}" 2>/dev/null
+    )" || exit_code=$?
 
     REMOTE_ACTION_HTTP_STATUS="$(printf '%s\n' "$output" | sed -n 's/^HTTP_STATUS=//p' | tail -n 1)"
     local response_body_b64
