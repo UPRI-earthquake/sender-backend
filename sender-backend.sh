@@ -1107,18 +1107,25 @@ function remote_action_emit_result() {
     local message="$3"
     local action="${4:-}"
     local http_status="${5:-0}"
+    local payload_json="${6:-null}"
 
-    printf 'REMOTE_ACTION_RESULT={"ok":%s,"code":"%s","message":"%s","action":"%s","httpStatus":%s}\n' \
+    if [[ -z "$payload_json" ]]; then
+        payload_json="null"
+    fi
+
+    printf 'REMOTE_ACTION_RESULT={"ok":%s,"code":"%s","message":"%s","action":"%s","httpStatus":%s,"payload":%s}\n' \
         "$ok" \
         "$(json_escape "$code")" \
         "$(json_escape "$message")" \
         "$(json_escape "$action")" \
-        "$http_status"
+        "$http_status" \
+        "$payload_json"
 }
 
 function remote_action_request_sender_backend() {
     local target_path="$1"
     local request_body="$2"
+    local request_method="${3:-POST}"
     local timeout_sec="${REMOTE_ACTION_TIMEOUT_SEC:-20}"
     local timeout_ms=20000
     local body_b64=""
@@ -1129,6 +1136,11 @@ function remote_action_request_sender_backend() {
     REMOTE_ACTION_HTTP_STATUS=""
     REMOTE_ACTION_HTTP_BODY=""
     REMOTE_ACTION_REQUEST_ERROR=""
+
+    request_method="$(printf '%s' "$request_method" | tr '[:lower:]' '[:upper:]' | xargs)"
+    if [[ "$request_method" != "GET" && "$request_method" != "POST" ]]; then
+        request_method="POST"
+    fi
 
     if ! command -v docker >/dev/null 2>&1; then
         REMOTE_ACTION_REQUEST_ERROR="docker command is unavailable on host."
@@ -1148,6 +1160,7 @@ const path = process.env.REMOTE_ACTION_PATH || '/';
 const bodyB64 = process.env.REMOTE_ACTION_BODY_B64 || '';
 const timeoutMs = Number(process.env.REMOTE_ACTION_TIMEOUT_MS || '20000');
 const backendPort = Number(process.env.REMOTE_ACTION_BACKEND_PORT || '5001');
+const method = String(process.env.REMOTE_ACTION_METHOD || 'POST').toUpperCase();
 let body = '{}';
 
 try {
@@ -1161,11 +1174,11 @@ const req = http.request(
   {
     hostname: '127.0.0.1',
     port: Number.isFinite(backendPort) && backendPort > 0 ? backendPort : 5001,
-    method: 'POST',
+    method,
     path,
     headers: {
       'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body),
+      ...(method === 'POST' ? { 'Content-Length': Buffer.byteLength(body) } : {}),
     },
     timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 20000,
   },
@@ -1190,13 +1203,16 @@ req.on('error', (error) => {
   process.exit(3);
 });
 
-req.write(body);
+if (method === 'POST') {
+  req.write(body);
+}
 req.end();
 EOF_NODE
 
     output="$(docker exec \
         -e REMOTE_ACTION_PATH="$target_path" \
         -e REMOTE_ACTION_BODY_B64="$body_b64" \
+        -e REMOTE_ACTION_METHOD="$request_method" \
         -e REMOTE_ACTION_TIMEOUT_MS="$timeout_ms" \
         -e REMOTE_ACTION_BACKEND_PORT="${BACKEND_PROD_PORT:-5001}" \
         "$CONTAINER" node -e "$node_script" 2>/dev/null)" || exit_code=$?
@@ -1242,8 +1258,11 @@ function remote_action_execute() {
     local url=""
     local request_body="{}"
     local request_path=""
+    local request_method="POST"
     local response_message=""
+    local response_payload_json="null"
     local status_code=0
+    local body_b64=""
 
     action="$(printf '%s' "$action_raw" | tr '[:lower:]' '[:upper:]' | xargs)"
     if [[ -z "$action" ]]; then
@@ -1262,6 +1281,7 @@ function remote_action_execute() {
         "UNLINK")
             request_path="/device/unlink"
             request_body="{}"
+            request_method="POST"
             ;;
         "RELINK")
             username="$(remote_tunnel_extract_json_string "$payload_json" "username")"
@@ -1275,6 +1295,7 @@ function remote_action_execute() {
             fi
             request_path="/device/link"
             request_body="{\"username\":\"$(json_escape "$username")\",\"password\":\"$(json_escape "$password")\",\"longitude\":\"$(json_escape "$longitude")\",\"latitude\":\"$(json_escape "$latitude")\",\"elevation\":\"$(json_escape "$elevation")\"}"
+            request_method="POST"
             ;;
         "ADD_SERVER")
             institution_name="$(remote_tunnel_extract_json_string "$payload_json" "institutionName")"
@@ -1285,6 +1306,22 @@ function remote_action_execute() {
             fi
             request_path="/servers/add"
             request_body="{\"institutionName\":\"$(json_escape "$institution_name")\",\"url\":\"$(json_escape "$url")\"}"
+            request_method="POST"
+            ;;
+        "REMOVE_SERVER")
+            url="$(remote_tunnel_extract_json_string "$payload_json" "url")"
+            if [[ -z "$url" ]]; then
+                remote_action_emit_result "false" "invalid_payload" "Remove server requires url." "$action" 400
+                return 1
+            fi
+            request_path="/servers/remove"
+            request_body="{\"url\":\"$(json_escape "$url")\"}"
+            request_method="POST"
+            ;;
+        "LIST_SERVERS")
+            request_path="/stream/status"
+            request_body="{}"
+            request_method="GET"
             ;;
         *)
             remote_action_emit_result "false" "unsupported_action" "Unsupported remote action." "$action" 400
@@ -1292,12 +1329,28 @@ function remote_action_execute() {
             ;;
     esac
 
-    if ! remote_action_request_sender_backend "$request_path" "$request_body"; then
+    if ! remote_action_request_sender_backend "$request_path" "$request_body" "$request_method"; then
         remote_action_emit_result "false" "request_failed" "${REMOTE_ACTION_REQUEST_ERROR:-Failed to execute local sender request.}" "$action" 502
         return 1
     fi
 
     status_code="$REMOTE_ACTION_HTTP_STATUS"
+
+    if [[ "$action" == "LIST_SERVERS" ]]; then
+        if [[ "$status_code" =~ ^2[0-9][0-9]$ ]]; then
+            body_b64="$(printf '%s' "${REMOTE_ACTION_HTTP_BODY:-{}}" | base64 | tr -d '\r\n')"
+            response_payload_json="{\"serversBodyB64\":\"$(json_escape "$body_b64")\"}"
+            remote_action_emit_result "true" "success" "Remote servers listed." "$action" "$status_code" "$response_payload_json"
+            return 0
+        fi
+        response_message="$(remote_tunnel_extract_json_string "${REMOTE_ACTION_HTTP_BODY:-}" "message")"
+        if [[ -z "$response_message" ]]; then
+            response_message="Unable to list remote servers."
+        fi
+        remote_action_emit_result "false" "remote_failed" "$response_message" "$action" "$status_code"
+        return 1
+    fi
+
     response_message="$(remote_tunnel_extract_json_string "${REMOTE_ACTION_HTTP_BODY:-}" "message")"
     if [[ -z "$response_message" ]]; then
         response_message="Remote action processed."
@@ -4299,6 +4352,6 @@ case $1 in
         remote_action_dispatch
         ;;
     *)
-        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|INSTALL_WATCHDOG_TIMER|INSTALL_REMOTE_TUNNEL_SERVICE|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|WATCHDOG_CHECK|REMOTE_TUNNEL_START|REMOTE_TUNNEL_STOP|REMOTE_TUNNEL_STATUS|REMOTE_ACTION_EXECUTE <UNLINK|RELINK|ADD_SERVER> [payload-b64]|REMOTE_ACTION_DISPATCH|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER|UNINSTALL_WATCHDOG_TIMER|UNINSTALL_REMOTE_TUNNEL_SERVICE]"
+        echo "Invalid argument. Usage: ./script.sh [INSTALL_SERVICE|INSTALL_UPDATE_TIMER|INSTALL_WATCHDOG_TIMER|INSTALL_REMOTE_TUNNEL_SERVICE|NETWORK_SETUP|PULL [image-ref]|CREATE [dns-mode] [image-ref]|START [image-ref]|STOP|UPDATE [image-ref]|UPDATE_STACK|WATCHDOG_CHECK|REMOTE_TUNNEL_START|REMOTE_TUNNEL_STOP|REMOTE_TUNNEL_STATUS|REMOTE_ACTION_EXECUTE <UNLINK|RELINK|ADD_SERVER|REMOVE_SERVER|LIST_SERVERS> [payload-b64]|REMOTE_ACTION_DISPATCH|REMOVE_NETWORK|REMOVE_VOLUME|REMOVE_IMAGE [image-ref]|REMOVE_CONTAINER|UNINSTALL_SERVICE|UNINSTALL_UPDATE_TIMER|UNINSTALL_WATCHDOG_TIMER|UNINSTALL_REMOTE_TUNNEL_SERVICE]"
         ;;
 esac
