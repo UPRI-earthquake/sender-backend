@@ -8,6 +8,113 @@ const { responseCodes, responseMessages } = require('./responseCodes')
 
 const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
 const serversFilePath = () => path.join(localDbDir(), 'servers.json');
+const DEFAULT_RINGSERVER_USERNAME_FALLBACK = 'UP-Diliman';
+
+function parseBooleanEnv(value, defaultValue = false) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return defaultValue;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === '1'
+    || normalized === 'true'
+    || normalized === 'yes'
+    || normalized === 'on';
+}
+
+function normalizeServerUrl(url) {
+  return String(url || '').trim().replace(/\/+$/, '').toLowerCase();
+}
+
+function getDefaultRingserverConfig() {
+  const configuredUsername = String(
+    process.env.DEFAULT_RINGSERVER_USERNAME || DEFAULT_RINGSERVER_USERNAME_FALLBACK,
+  ).trim();
+  const configuredUrl = String(process.env.DEFAULT_RINGSERVER_URL || '').trim();
+  return {
+    username: configuredUsername || DEFAULT_RINGSERVER_USERNAME_FALLBACK,
+    url: configuredUrl,
+  };
+}
+
+function autoAddDefaultRingserverEnabled() {
+  const defaultEnabled = process.env.NODE_ENV === 'test' ? false : true;
+  return parseBooleanEnv(process.env.AUTO_ADD_DEFAULT_RINGSERVER_ON_LINK, defaultEnabled);
+}
+
+async function resolveDefaultRingserverTarget() {
+  const { username: defaultUsername, url: defaultUrl } = getDefaultRingserverConfig();
+  if (defaultUrl) {
+    return {
+      institutionName: defaultUsername,
+      url: defaultUrl,
+    };
+  }
+
+  const ringserverHosts = await serversService.requestRingserverHostsList();
+  if (!Array.isArray(ringserverHosts) || ringserverHosts.length === 0) {
+    return null;
+  }
+
+  const matchedHost = ringserverHosts.find((host) => {
+    const candidate = String(host?.username || '').trim();
+    return candidate.toLowerCase() === defaultUsername.toLowerCase();
+  });
+
+  if (!matchedHost) {
+    return null;
+  }
+
+  const ringserverUrl = String(matchedHost.ringserverUrl || '').trim();
+  const ringserverPort = String(matchedHost.ringserverPort || '').trim();
+  if (!ringserverUrl || !ringserverPort) {
+    return null;
+  }
+
+  return {
+    institutionName: String(matchedHost.username || defaultUsername),
+    url: `${ringserverUrl}:${ringserverPort}`,
+  };
+}
+
+async function ensureDefaultRingserverAfterLink() {
+  if (!autoAddDefaultRingserverEnabled()) {
+    return { attempted: false, added: false, reason: 'auto-add-disabled' };
+  }
+
+  const target = await resolveDefaultRingserverTarget();
+  if (!target?.url) {
+    return { attempted: true, added: false, reason: 'default-ringserver-unresolved' };
+  }
+
+  const existingServers = await readLocalServersList();
+  const targetUrlNormalized = normalizeServerUrl(target.url);
+  const duplicate = existingServers.find((item) => normalizeServerUrl(item?.url) === targetUrlNormalized);
+  if (duplicate) {
+    return {
+      attempted: true,
+      added: false,
+      reason: 'already-exists',
+      server: duplicate,
+    };
+  }
+
+  const newServer = {
+    institutionName: target.institutionName,
+    url: target.url,
+  };
+
+  existingServers.push(newServer);
+  await writeLocalServersList(existingServers);
+  await streamUtils.addNewStream(newServer.url, newServer.institutionName);
+  await streamUtils.spawnSlink2dali(newServer.url);
+
+  return {
+    attempted: true,
+    added: true,
+    reason: 'added',
+    server: newServer,
+  };
+}
 
 async function readLocalServersList() {
   try {
@@ -130,8 +237,8 @@ async function removeServer(req, res) {
       });
     }
 
-    // Attempt remote cleanup on the associated brgy account
     const targetServer = existingServers[index] || {};
+    // Attempt remote cleanup on the associated brgy account
     const brgyUsername = targetServer.institutionName;
     const { streamId } = await deviceService.getStoredDeviceInfo();
     if (brgyUsername && streamId) {
@@ -176,4 +283,10 @@ async function removeServer(req, res) {
   }
 }
 
-module.exports = { getRingserverHosts, addServer, removeServer, linkingStatusCheck };
+module.exports = {
+  getRingserverHosts,
+  addServer,
+  removeServer,
+  linkingStatusCheck,
+  ensureDefaultRingserverAfterLink,
+};

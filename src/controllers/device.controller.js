@@ -3,6 +3,7 @@ const streamUtils = require('./stream.utils');
 const Joi = require('joi');
 const { responseCodes, responseMessages } = require('./responseCodes');
 const serversService = require('../services/servers.service');
+const serversController = require('./servers.controller');
 
 // Function for getting the information of the device saved in local file store
 async function getDeviceInfo(req, res) {
@@ -108,11 +109,24 @@ async function linkDevice(req, res) {
       });
     }
 
+    let defaultRingserverProvision = null;
+    try {
+      defaultRingserverProvision = await serversController.ensureDefaultRingserverAfterLink();
+    } catch (defaultServerError) {
+      console.log(`Default ringserver auto-add skipped: ${defaultServerError?.message || defaultServerError}`);
+      defaultRingserverProvision = {
+        attempted: true,
+        added: false,
+        reason: 'auto-add-failed',
+      };
+    }
+
     return res.status(200).json({
       status: responseCodes.DEVICE_LINKING_SUCCESS,
       message: 'Successfully Requested Linking to W1',
+      defaultRingserver: defaultRingserverProvision,
     });
-	  } catch (error) {
+		  } catch (error) {
 	    if (error.response) {
 	      const statusCode = error.response.status;
       const backendMessageRaw = error.response?.data?.message;

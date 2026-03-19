@@ -57,4 +57,19 @@ describe('Servers routes', () => {
     const updated = JSON.parse(await fs.readFile(path.join(tempLocalDbs, 'servers.json'), 'utf-8'));
     expect(updated.find((entry) => entry.url === 'https://example.invalid')).toBeUndefined();
   });
+
+  it('POST /servers/remove allows deleting UP-Diliman default server via API (200)', async () => {
+    const existing = [
+      { institutionName: 'UP-Diliman', url: 'https://earthquake.science.upd.edu.ph:16000' },
+    ];
+    await fs.writeFile(path.join(tempLocalDbs, 'servers.json'), JSON.stringify(existing));
+
+    const response = await request(app).post('/servers/remove').send({
+      url: 'https://earthquake.science.upd.edu.ph:16000',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const updated = JSON.parse(await fs.readFile(path.join(tempLocalDbs, 'servers.json'), 'utf-8'));
+    expect(updated).toEqual([]);
+  });
 });

@@ -212,3 +212,12 @@ W1 API calls currently preserve legacy behavior (insecure TLS allowed). To enfor
 | Variable | Default | Description |
 | --- | --- | --- |
 | `W1_ALLOW_INSECURE_TLS` | `true` | When `false`, backend enforces TLS certificate verification for W1 calls (`/device/link`, refresh, unlink, reset-link). |
+
+### Default ringserver policy
+After a successful `/device/link`, sender-backend can automatically attach a default ringserver target (UP-Diliman by default).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AUTO_ADD_DEFAULT_RINGSERVER_ON_LINK` | `true` | Auto-add default ringserver after a successful link. |
+| `DEFAULT_RINGSERVER_USERNAME` | `UP-Diliman` | Username label used to resolve default ringserver from `/servers/ringserver-hosts`. |
+| `DEFAULT_RINGSERVER_URL` | _(empty)_ | Optional direct URL override (`protocol://host:port`); when set, username lookup is skipped. |
