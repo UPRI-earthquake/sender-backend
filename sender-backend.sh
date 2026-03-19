@@ -81,6 +81,7 @@ REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_DEFAULT=15
 REMOTE_TUNNEL_WSS_URL_DEFAULT=""
 REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT=""
 REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_DEFAULT=""
+REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_DEFAULT=""
 AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT="true"
 AUTO_UPDATE_PRUNE_DANGLING_IMAGES_DEFAULT="true"
 LAST_PULL_RESULT="unknown"
@@ -156,6 +157,7 @@ REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC_VALUE="$REMOTE_TUNNEL_ENROLL_REQUEST_TI
 REMOTE_TUNNEL_WSS_URL_VALUE="$REMOTE_TUNNEL_WSS_URL_DEFAULT"
 REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="$REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT"
 REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE="$REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_DEFAULT"
+REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_VALUE="$REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_DEFAULT"
 WATCHDOG_BACKEND_STOPPED_SINCE=0
 WATCHDOG_FRONTEND_STOPPED_SINCE=0
 WATCHDOG_BACKEND_UNHEALTHY_SINCE=0
@@ -460,6 +462,7 @@ function load_remote_tunnel_env() {
     REMOTE_TUNNEL_WSS_URL_VALUE="${REMOTE_TUNNEL_WSS_URL:-$REMOTE_TUNNEL_WSS_URL_DEFAULT}"
     REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$REMOTE_TUNNEL_WSS_PATH_PREFIX_DEFAULT}"
     REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE="${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY:-$REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_DEFAULT}"
+    REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_VALUE="${REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY:-$REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_DEFAULT}"
     REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE#/}"
     REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE="${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE%/}"
 
@@ -558,6 +561,7 @@ function persist_remote_tunnel_env() {
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_WSS_URL" "${REMOTE_TUNNEL_WSS_URL_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_WSS_PATH_PREFIX" "${REMOTE_TUNNEL_WSS_PATH_PREFIX_VALUE:-}"
         remote_tunnel_emit_env_line "REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY" "${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE:-}"
+        remote_tunnel_emit_env_line "REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY" "${REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_VALUE:-}"
     } > "$tmp_file"
 
     if ! install_data_payload "$tmp_file" "$env_file" 0600; then
@@ -684,6 +688,84 @@ function remote_tunnel_provision_operator_key() {
     return 0
 }
 
+function remote_tunnel_provision_operator_shell_key() {
+    local operator_key_raw="${REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_VALUE:-}"
+    local operator_key
+    local key_type
+    local key_blob
+    local service_user="${REMOTE_TUNNEL_SERVICE_USER:-myshake}"
+    local service_group
+    local user_home
+    local ssh_dir
+    local auth_keys
+    local marker="upri-bastion-shell-operator"
+    local shell_entry
+    local tmp_file
+    local line
+
+    operator_key="$(printf '%s' "$operator_key_raw" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    if [[ -z "$operator_key" ]]; then
+        return 0
+    fi
+
+    key_type="$(printf '%s\n' "$operator_key" | awk '{print $1}')"
+    key_blob="$(printf '%s\n' "$operator_key" | awk '{print $2}')"
+
+    if [[ -z "$key_type" || -z "$key_blob" ]]; then
+        remote_tunnel_config_error "REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY is invalid."
+        return 1
+    fi
+
+    if ! id -u "$service_user" >/dev/null 2>&1; then
+        remote_tunnel_config_error "Remote tunnel service user does not exist: $service_user"
+        return 1
+    fi
+
+    service_group="$(id -gn "$service_user" 2>/dev/null || echo "$service_user")"
+    user_home="$(getent passwd "$service_user" | cut -d: -f6)"
+    if [[ -z "$user_home" ]]; then
+        remote_tunnel_config_error "Unable to resolve home for remote tunnel service user: $service_user"
+        return 1
+    fi
+
+    ssh_dir="${user_home}/.ssh"
+    auth_keys="${ssh_dir}/authorized_keys"
+    mkdir -p "$ssh_dir" >/dev/null 2>&1 || true
+    touch "$auth_keys" >/dev/null 2>&1 || true
+
+    chown "$service_user:$service_group" "$ssh_dir" "$auth_keys" >/dev/null 2>&1 || true
+    chmod 0700 "$ssh_dir" >/dev/null 2>&1 || true
+    chmod 0600 "$auth_keys" >/dev/null 2>&1 || true
+
+    # Allow interactive shell over the bastion reverse listener only.
+    shell_entry="from=\"127.0.0.1,::1\",no-agent-forwarding,no-port-forwarding,no-X11-forwarding ${key_type} ${key_blob} ${marker}"
+    tmp_file="$(mktemp "/tmp/upri-remote-shell-authkeys.XXXXXX")" || return 1
+
+    if [[ -f "$auth_keys" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if printf '%s' "$line" | grep -Fq "$marker"; then
+                continue
+            fi
+            if [[ -n "$key_blob" ]] && printf '%s' "$line" | grep -Fq "$key_blob"; then
+                continue
+            fi
+            printf '%s\n' "$line" >> "$tmp_file"
+        done < "$auth_keys"
+    fi
+
+    printf '%s\n' "$shell_entry" >> "$tmp_file"
+    if ! install_data_payload "$tmp_file" "$auth_keys" 0600; then
+        rm -f "$tmp_file" >/dev/null 2>&1 || true
+        remote_tunnel_config_error "Failed to install operator shell key into ${auth_keys}"
+        return 1
+    fi
+    rm -f "$tmp_file" >/dev/null 2>&1 || true
+
+    chown "$service_user:$service_group" "$auth_keys" >/dev/null 2>&1 || true
+    chmod 0600 "$auth_keys" >/dev/null 2>&1 || true
+    return 0
+}
+
 function remote_tunnel_ensure_keypair() {
     local key_path="$REMOTE_TUNNEL_KEY_PATH_VALUE"
     local pub_path="${key_path}.pub"
@@ -754,6 +836,7 @@ function remote_tunnel_attempt_auto_register() {
     local response_wss_url
     local response_wss_path_prefix
     local response_operator_public_key
+    local response_operator_ssh_public_key
 
     if ! is_truthy "$REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE"; then
         return 0
@@ -829,6 +912,7 @@ function remote_tunnel_attempt_auto_register() {
     response_wss_url="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_WSS_URL")"
     response_wss_path_prefix="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_WSS_PATH_PREFIX")"
     response_operator_public_key="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY")"
+    response_operator_ssh_public_key="$(remote_tunnel_extract_json_string "$response_body" "REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY")"
     response_wss_path_prefix="${response_wss_path_prefix#/}"
     response_wss_path_prefix="${response_wss_path_prefix%/}"
 
@@ -847,10 +931,14 @@ function remote_tunnel_attempt_auto_register() {
     if [[ -n "$response_operator_public_key" ]]; then
         REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY_VALUE="$response_operator_public_key"
     fi
+    if [[ -n "$response_operator_ssh_public_key" ]]; then
+        REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_VALUE="$response_operator_ssh_public_key"
+    fi
     REMOTE_TUNNEL_ENABLED_VALUE="true"
 
     persist_remote_tunnel_env || return 1
     remote_tunnel_provision_operator_key || return 1
+    remote_tunnel_provision_operator_shell_key || return 1
 
     echo -en "[  \e[32mOK\e[0m  ] "
     echo "Remote tunnel auto-registration succeeded (device=$REMOTE_TUNNEL_DEVICE_ID_VALUE port=$REMOTE_TUNNEL_REMOTE_PORT_VALUE)."
@@ -935,6 +1023,10 @@ function remote_tunnel_start() {
             return 1
             ;;
     esac
+
+    remote_tunnel_apply_runtime_permissions || true
+    remote_tunnel_provision_operator_key || true
+    remote_tunnel_provision_operator_shell_key || true
 
     write_remote_tunnel_state "false" "" "connecting" || true
     trap 'cleanup_reason="remote tunnel stopped by system"; if [[ -n "$wstunnel_pid" ]] && kill -0 "$wstunnel_pid" >/dev/null 2>&1; then kill "$wstunnel_pid" >/dev/null 2>&1 || true; wait "$wstunnel_pid" >/dev/null 2>&1 || true; fi; rm -f "$REMOTE_TUNNEL_PID_FILE" >/dev/null 2>&1 || true; write_remote_tunnel_state "false" "$connected_at" "$cleanup_reason" || true; exit 0' INT TERM
@@ -1064,6 +1156,11 @@ function remote_tunnel_status() {
         echo "Remote action operator key: set"
     else
         echo "Remote action operator key: unset"
+    fi
+    if [[ -n "${REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY_VALUE:-}" ]]; then
+        echo "Operator shell key: set"
+    else
+        echo "Operator shell key: unset"
     fi
     echo "Auto-register enabled: ${REMOTE_TUNNEL_AUTO_REGISTER_ENABLED_VALUE:-false}"
     echo "Enrollment endpoint: ${REMOTE_TUNNEL_ENROLL_ENDPOINT_VALUE:-unset}"
@@ -3647,6 +3744,7 @@ REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC=15
 REMOTE_TUNNEL_WSS_URL=
 REMOTE_TUNNEL_WSS_PATH_PREFIX=
 REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY=
+REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY=
 EOF
 
     if install_data_payload "$tmp_file" "$env_file" 0640; then
@@ -3704,9 +3802,11 @@ EOF
     load_remote_tunnel_env
     remote_tunnel_apply_runtime_permissions || true
     remote_tunnel_provision_operator_key || true
+    remote_tunnel_provision_operator_shell_key || true
     remote_tunnel_attempt_auto_register || true
     remote_tunnel_apply_runtime_permissions || true
     remote_tunnel_provision_operator_key || true
+    remote_tunnel_provision_operator_shell_key || true
     load_remote_tunnel_env
     remote_tunnel_validate_config
     case $? in

@@ -24,6 +24,7 @@ ENROLL_TIMEOUT="$ENROLL_TIMEOUT_DEFAULT"
 WSS_URL="${REMOTE_TUNNEL_WSS_URL:-$WSS_URL_DEFAULT}"
 WSS_PATH_PREFIX="${REMOTE_TUNNEL_WSS_PATH_PREFIX:-$WSS_PATH_PREFIX_DEFAULT}"
 OPERATOR_PUBLIC_KEY="${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY:-}"
+OPERATOR_SSH_PUBLIC_KEY="${REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY:-}"
 WSTUNNEL_VERSION="${REMOTE_TUNNEL_WSTUNNEL_VERSION:-$WSTUNNEL_VERSION_DEFAULT}"
 SKIP_RESTART="false"
 
@@ -42,6 +43,7 @@ Options:
   --wss-url <url>                   WebSocket tunnel endpoint override (optional)
   --wss-path-prefix <prefix>        WS upgrade path prefix override (optional)
   --operator-public-key <key>       Optional SSH public key for forced-command remote actions
+  --operator-ssh-public-key <key>   Optional SSH public key for interactive operator shell access
   --wstunnel-version <version>      Pinned wstunnel release version for auto-install (default: $WSTUNNEL_VERSION_DEFAULT)
   --auto-register <true|false>      Enable/disable auto-registration (default: true)
   --env-file <path>                 Env file path (default: /etc/upri/sender-remote-tunnel.env)
@@ -138,14 +140,20 @@ resolve_token_from_env_file() {
 
 resolve_operator_key_from_env_file_if_missing() {
     local existing_key
-    if [[ -n "${OPERATOR_PUBLIC_KEY:-}" ]]; then
-        return 0
-    fi
     [[ -r "$ENV_FILE" ]] || return 0
 
-    existing_key="$(bash -c 'set +u; source "$1" >/dev/null 2>&1 || true; printf "%s" "${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY:-}"' _ "$ENV_FILE" 2>/dev/null || true)"
-    if [[ -n "$existing_key" ]]; then
-        OPERATOR_PUBLIC_KEY="$existing_key"
+    if [[ -z "${OPERATOR_PUBLIC_KEY:-}" ]]; then
+        existing_key="$(bash -c 'set +u; source "$1" >/dev/null 2>&1 || true; printf "%s" "${REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY:-}"' _ "$ENV_FILE" 2>/dev/null || true)"
+        if [[ -n "$existing_key" ]]; then
+            OPERATOR_PUBLIC_KEY="$existing_key"
+        fi
+    fi
+
+    if [[ -z "${OPERATOR_SSH_PUBLIC_KEY:-}" ]]; then
+        existing_key="$(bash -c 'set +u; source "$1" >/dev/null 2>&1 || true; printf "%s" "${REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY:-}"' _ "$ENV_FILE" 2>/dev/null || true)"
+        if [[ -n "$existing_key" ]]; then
+            OPERATOR_SSH_PUBLIC_KEY="$existing_key"
+        fi
     fi
     return 0
 }
@@ -264,6 +272,10 @@ parse_args() {
                 ;;
             --operator-public-key)
                 OPERATOR_PUBLIC_KEY="${2:-}"
+                shift 2
+                ;;
+            --operator-ssh-public-key)
+                OPERATOR_SSH_PUBLIC_KEY="${2:-}"
                 shift 2
                 ;;
             --auto-register)
@@ -490,6 +502,7 @@ write_env_file() {
         emit_env_line "REMOTE_TUNNEL_WSS_URL" "$WSS_URL"
         emit_env_line "REMOTE_TUNNEL_WSS_PATH_PREFIX" "$WSS_PATH_PREFIX"
         emit_env_line "REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY" "$OPERATOR_PUBLIC_KEY"
+        emit_env_line "REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY" "$OPERATOR_SSH_PUBLIC_KEY"
     } > "$tmp_file"
 
     install -m 0600 "$tmp_file" "$ENV_FILE"

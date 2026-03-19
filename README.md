@@ -169,6 +169,8 @@ Supported tunnel env vars:
 - `REMOTE_TUNNEL_ENROLL_REQUEST_TIMEOUT_SEC`
 - `REMOTE_TUNNEL_WSS_URL`
 - `REMOTE_TUNNEL_WSS_PATH_PREFIX`
+- `REMOTE_TUNNEL_OPERATOR_PUBLIC_KEY` (forced-command key used by backend remote actions)
+- `REMOTE_TUNNEL_OPERATOR_SSH_PUBLIC_KEY` (interactive shell key used for bastion operator SSH)
 
 `/health/sender-state` now also reports `remoteTunnel` when the state file is available.
 
