@@ -130,6 +130,10 @@ The watchdog checks backend/frontend container runtime state and attempts start/
 
 `install.sh` provisions the service, but tunnel enrollment/config still depends on `/etc/upri/sender-remote-tunnel.env`.
 
+Scope split:
+- EarthquakeHub commons owns bastion scripts, registry state, and operator-side access flow.
+- This repo owns the sender/device-side tunnel service, enrollment helper, and local tunnel health reporting.
+
 Remote tunnel service commands:
 - `sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`
 - `sender-backend UNINSTALL_REMOTE_TUNNEL_SERVICE`
@@ -143,7 +147,7 @@ Automatic setup helper (recommended to reduce manual steps on deployed devices):
 - Host package prerequisites:
   - `sudo apt-get update`
   - `sudo apt-get install -y openssh-client`
-  - `wstunnel` auto-install is attempted from `ghcr.io/erebe/wstunnel:latest` when missing
+  - `wstunnel` auto-install is attempted from the pinned upstream GitHub release when missing
 - Example:
   - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
   - optional overrides: `--wss-url ... --wss-path-prefix ...`

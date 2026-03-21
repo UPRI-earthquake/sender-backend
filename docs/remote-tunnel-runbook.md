@@ -1,6 +1,8 @@
 # Sender Remote Tunnel Runbook (SSH over WebSocket)
 
-This runbook covers remote access for deployed RShake devices using reverse SSH-over-WebSocket (`wstunnel`) and per-device remote port mappings.
+This runbook covers the sender-side/device-side workflow for remote access on deployed RShake devices using reverse SSH-over-WebSocket (`wstunnel`) and per-device remote port mappings.
+
+Server-side bastion registry ownership, operator access policy, and bastion scripts now live in EarthquakeHub commons. Treat this document as the sender-side companion runbook and use the commons documentation/scripts as the source of truth for bastion administration.
 
 ## 1. Bastion setup and registry ownership
 
@@ -15,11 +17,13 @@ Registry source of truth:
 - `/etc/upri/rshake-tunnels/devices.csv`
 - Columns: `device_id,bastion_user,remote_port,status,key_fingerprint,created_at,revoked_at`
 
+This repo does not own those bastion assets. This repo owns the device-side tunnel service, enrollment flow, helper script, and health reporting.
+
 ## 2. Device setup modes
 
 ### Manual fallback mode
 
-1. Run server-side register script and capture returned env snippet.
+1. Run the server-side register script in commons and capture the returned env snippet.
 2. On device, install tunnel service:
    - `sudo sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`
 3. Write `/etc/upri/sender-remote-tunnel.env` manually with the returned values.
@@ -31,7 +35,7 @@ Registry source of truth:
 
 ### Automatic enrollment mode
 
-1. Ensure backend enrollment API is enabled (`POST /device/tunnel/enroll`).
+1. Ensure the backend enrollment API is enabled in the deployed backend (`POST /device/tunnel/enroll`).
 2. Configure device env file with:
    - `REMOTE_TUNNEL_AUTO_REGISTER_ENABLED=true`
    - `REMOTE_TUNNEL_ENROLL_TOKEN=<sensor bearer token>`
@@ -47,12 +51,12 @@ Registry source of truth:
 
 ### Automatic helper script (reduced manual setup)
 
-Use helper script from the sender-backend repo on the device:
+Use the helper script from this repo on the device:
 
 - Ensure host packages are installed first:
   - `sudo apt-get update`
   - `sudo apt-get install -y openssh-client`
-  - `wstunnel` auto-install is attempted from `ghcr.io/erebe/wstunnel:latest` when missing
+  - `wstunnel` auto-install is attempted from the pinned upstream GitHub release when missing
 - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
   - optional overrides: `--wss-url ... --wss-path-prefix ...`
 - If you are running from a checked-out repo instead of an installed wrapper, use:
@@ -74,7 +78,7 @@ The helper will:
 ## 4. Operator access pattern
 
 1. Connect to OpenVPN.
-2. SSH to bastion.
+2. SSH to the commons-managed bastion.
 3. SSH to device through assigned reverse port:
    - `ssh -p <remote_port> myshake@127.0.0.1`
 4. Elevate only when needed:
@@ -83,7 +87,7 @@ The helper will:
 ## 5. Key rotation
 
 1. Generate new keypair per device.
-2. Re-run server-side `register-device.sh` for same `--device-id` with new public key.
+2. Re-run the commons-side `register-device.sh` for the same `--device-id` with the new public key.
 3. Replace private key on device (`REMOTE_TUNNEL_KEY_PATH`) if required.
 4. Restart tunnel service.
 5. Validate with `REMOTE_TUNNEL_STATUS` and operator SSH path.
