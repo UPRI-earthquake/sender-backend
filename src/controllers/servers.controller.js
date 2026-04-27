@@ -8,7 +8,7 @@ const { responseCodes, responseMessages } = require('./responseCodes')
 
 const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
 const serversFilePath = () => path.join(localDbDir(), 'servers.json');
-const DEFAULT_RINGSERVER_USERNAME_FALLBACK = 'UP-Diliman';
+const DEFAULT_RINGSERVER_USERNAME_FALLBACK = 'UPRI';
 
 function parseBooleanEnv(value, defaultValue = false) {
   if (value === undefined || value === null || String(value).trim() === '') {
@@ -39,6 +39,31 @@ function getDefaultRingserverConfig() {
 function autoAddDefaultRingserverEnabled() {
   const defaultEnabled = process.env.NODE_ENV === 'test' ? false : true;
   return parseBooleanEnv(process.env.AUTO_ADD_DEFAULT_RINGSERVER_ON_LINK, defaultEnabled);
+}
+
+function autoEnsureDefaultRingserverOnStartupEnabled() {
+  const defaultEnabled = process.env.NODE_ENV === 'test' ? false : true;
+  return parseBooleanEnv(process.env.AUTO_ADD_DEFAULT_RINGSERVER_ON_STARTUP, defaultEnabled);
+}
+
+function getProtectedRingserverConfig() {
+  const defaultConfig = getDefaultRingserverConfig();
+  return {
+    username: String(process.env.PROTECTED_RINGSERVER_USERNAME || defaultConfig.username || '').trim(),
+    url: String(process.env.PROTECTED_RINGSERVER_URL || defaultConfig.url || '').trim(),
+  };
+}
+
+function isProtectedRingserver(entry = {}) {
+  const { username, url } = getProtectedRingserverConfig();
+  const entryUsername = String(entry.institutionName || '').trim();
+  if (username && entryUsername.toLowerCase() === username.toLowerCase()) {
+    return true;
+  }
+  if (url && normalizeServerUrl(entry.url) === normalizeServerUrl(url)) {
+    return true;
+  }
+  return false;
 }
 
 async function resolveDefaultRingserverTarget() {
@@ -76,11 +101,7 @@ async function resolveDefaultRingserverTarget() {
   };
 }
 
-async function ensureDefaultRingserverAfterLink() {
-  if (!autoAddDefaultRingserverEnabled()) {
-    return { attempted: false, added: false, reason: 'auto-add-disabled' };
-  }
-
+async function ensureDefaultRingserver() {
   const target = await resolveDefaultRingserverTarget();
   if (!target?.url) {
     return { attempted: true, added: false, reason: 'default-ringserver-unresolved' };
@@ -114,6 +135,33 @@ async function ensureDefaultRingserverAfterLink() {
     reason: 'added',
     server: newServer,
   };
+}
+
+async function ensureDefaultRingserverAfterLink() {
+  if (!autoAddDefaultRingserverEnabled()) {
+    return { attempted: false, added: false, reason: 'auto-add-disabled' };
+  }
+
+  return ensureDefaultRingserver();
+}
+
+async function ensureDefaultRingserverOnStartup() {
+  if (!autoEnsureDefaultRingserverOnStartupEnabled()) {
+    return { attempted: false, added: false, reason: 'startup-auto-add-disabled' };
+  }
+
+  try {
+    await deviceService.ensureValidAccessToken({ skipAlertCredentialSync: true });
+  } catch (error) {
+    return {
+      attempted: false,
+      added: false,
+      reason: error?.code === 'RELINK_REQUIRED' ? 'device-not-linked' : 'token-check-failed',
+      errorMessage: error?.message || String(error),
+    };
+  }
+
+  return ensureDefaultRingserver();
 }
 
 async function readLocalServersList() {
@@ -238,6 +286,13 @@ async function removeServer(req, res) {
     }
 
     const targetServer = existingServers[index] || {};
+    if (isProtectedRingserver(targetServer)) {
+      return res.status(409).json({
+        status: responseCodes.REMOVE_SERVER_ERROR,
+        message: 'Protected default ringserver cannot be removed',
+      });
+    }
+
     // Attempt remote cleanup on the associated brgy account
     const brgyUsername = targetServer.institutionName;
     const { streamId } = await deviceService.getStoredDeviceInfo();
@@ -289,4 +344,5 @@ module.exports = {
   removeServer,
   linkingStatusCheck,
   ensureDefaultRingserverAfterLink,
+  ensureDefaultRingserverOnStartup,
 };

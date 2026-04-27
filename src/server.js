@@ -7,6 +7,7 @@ const { initializeStreamsObject, spawnSlink2dali } = require('./controllers/stre
 let { streamsObject } = require('./controllers/stream.utils')
 const { refreshIfExpiringSoonWithStatus, syncRshakeAlertCredential } = require('./services/device.service')
 const rshakeAlertsService = require('./services/rshakeAlerts.service')
+const serversController = require('./controllers/servers.controller')
 
 // Asynchronous function for:
 // 1. creating local file store,
@@ -25,6 +26,17 @@ async function init() {
         } catch (error) {
           console.error(`Error starting stream for ${url}: ${error?.message || error}`);
         }
+      }
+    }
+
+    if (process.env.NODE_ENV !== 'test') {
+      const defaultRingserverResult = await serversController.ensureDefaultRingserverOnStartup();
+      if (defaultRingserverResult?.added) {
+        console.log(`Default ringserver added on startup: ${defaultRingserverResult.server?.url}`);
+      } else if (defaultRingserverResult?.attempted) {
+        console.log(`Default ringserver startup check: ${defaultRingserverResult.reason}`);
+      } else {
+        console.log(`Default ringserver startup skipped: ${defaultRingserverResult?.reason}`);
       }
     }
   } catch (error) {

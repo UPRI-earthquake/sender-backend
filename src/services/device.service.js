@@ -41,6 +41,8 @@ const deviceStatusPath = '/device/status';
 const alertCredentialPath = '/device/alert-credential';
 const allowInsecureW1Tls = String(process.env.W1_ALLOW_INSECURE_TLS || 'true').trim().toLowerCase() === 'true';
 const httpsAgent = new https.Agent({ rejectUnauthorized: !allowInsecureW1Tls });
+const legacyProdW1Host = 'earthquake.science.upd.edu.ph/api';
+const defaultProdW1Host = 'earthquake.up.edu.ph/api';
 
 function formatRelinkMessage(reason) {
   if (!reason) {
@@ -345,9 +347,15 @@ async function getStoredDeviceInfo() {
 }
 
 function buildW1BaseUrl() {
-  return (process.env.NODE_ENV === 'production')
-    ? `https://${process.env.W1_PROD_IP}`
-    : `http://${process.env.W1_DEV_IP}:${process.env.W1_DEV_PORT}`;
+  if (process.env.NODE_ENV === 'production') {
+    const configuredHost = String(process.env.W1_PROD_IP || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const prodHost = !configuredHost || configuredHost === legacyProdW1Host
+      ? defaultProdW1Host
+      : configuredHost;
+    return `https://${prodHost}`;
+  }
+
+  return `http://${process.env.W1_DEV_IP}:${process.env.W1_DEV_PORT}`;
 }
 
 // Function for checking if a jwt access token is already saved 

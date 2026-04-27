@@ -53,7 +53,7 @@ Options:
 
 Examples:
   sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN"
-  sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"
+  sudo ./setup-remote-tunnel.sh --enroll-token "$TOKEN" --enroll-endpoint "https://earthquake.up.edu.ph/api/device/tunnel/enroll"
 
 Host package prerequisites:
   sudo apt-get update

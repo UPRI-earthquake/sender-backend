@@ -8,7 +8,7 @@ const localDbPath = (fileName) => path.join(process.env.LOCALDBS_DIRECTORY || '.
 async function requestRingserverHostsList() {
   try {
     const url = (process.env.NODE_ENV === 'production')
-      ? 'https://' + process.env.W1_PROD_IP + '/accounts/ringserver-hosts'
+      ? `${buildW1BaseUrl()}/accounts/ringserver-hosts`
       : 'http://' + process.env.W1_DEV_IP + ':' + process.env.W1_DEV_PORT + '/accounts/ringserver-hosts';
 
     const response = await axios.get(url);

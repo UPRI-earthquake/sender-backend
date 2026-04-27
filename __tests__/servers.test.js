@@ -72,4 +72,19 @@ describe('Servers routes', () => {
     const updated = JSON.parse(await fs.readFile(path.join(tempLocalDbs, 'servers.json'), 'utf-8'));
     expect(updated).toEqual([]);
   });
+
+  it('POST /servers/remove rejects deleting UPRI protected default server (409)', async () => {
+    const existing = [
+      { institutionName: 'UPRI', url: 'earthquake.up.edu.ph:16000' },
+    ];
+    await fs.writeFile(path.join(tempLocalDbs, 'servers.json'), JSON.stringify(existing));
+
+    const response = await request(app).post('/servers/remove').send({
+      url: 'earthquake.up.edu.ph:16000',
+    });
+
+    expect(response.statusCode).toBe(409);
+    const updated = JSON.parse(await fs.readFile(path.join(tempLocalDbs, 'servers.json'), 'utf-8'));
+    expect(updated).toEqual(existing);
+  });
 });

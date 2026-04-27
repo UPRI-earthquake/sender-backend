@@ -38,7 +38,7 @@ router.use(bodyParser.json())
  *                         example: "UPRI's Ringserver"
  *                       ringserverUrl:
  *                         type: string
- *                         example: "https://earthquake.science.upd.edu.ph"
+ *                         example: "https://earthquake.up.edu.ph"
  *                       ringserverPort:
  *                         type: number
  *                         example: 16000
@@ -81,7 +81,7 @@ router.get('/ringserver-hosts', serverController.getRingserverHosts);
  *                 type: string
  *                 description: Ringserver's alias
  *             example:
- *               url: https://earthquake.science.upd.edu.ph
+ *               url: https://earthquake.up.edu.ph
  *               hostName: UPRI's Ringserver
  *     responses:
  *       200:
@@ -168,7 +168,7 @@ router.post('/add',
  *             required:
  *               - url
  *             example:
- *               url: "https://earthquake.science.upd.edu.ph"
+ *               url: "https://earthquake.up.edu.ph"
  *     responses:
  *       200:
  *         description: Server removed successfully
