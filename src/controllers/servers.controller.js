@@ -8,7 +8,8 @@ const { responseCodes, responseMessages } = require('./responseCodes')
 
 const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
 const serversFilePath = () => path.join(localDbDir(), 'servers.json');
-const DEFAULT_RINGSERVER_USERNAME_FALLBACK = 'UPRI';
+const DEFAULT_RINGSERVER_USERNAME_FALLBACK = 'UP-Diliman';
+const DEFAULT_RINGSERVER_URL_FALLBACK = 'earthquake.science.upd.edu.ph:16000';
 
 function parseBooleanEnv(value, defaultValue = false) {
   if (value === undefined || value === null || String(value).trim() === '') {
@@ -22,7 +23,11 @@ function parseBooleanEnv(value, defaultValue = false) {
 }
 
 function normalizeServerUrl(url) {
-  return String(url || '').trim().replace(/\/+$/, '').toLowerCase();
+  return String(url || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/g, '')
+    .toLowerCase();
 }
 
 function getDefaultRingserverConfig() {
@@ -86,6 +91,12 @@ async function resolveDefaultRingserverTarget() {
   });
 
   if (!matchedHost) {
+    if (defaultUsername.toLowerCase() === DEFAULT_RINGSERVER_USERNAME_FALLBACK.toLowerCase()) {
+      return {
+        institutionName: defaultUsername,
+        url: DEFAULT_RINGSERVER_URL_FALLBACK,
+      };
+    }
     return null;
   }
 

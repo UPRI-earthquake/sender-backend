@@ -220,13 +220,13 @@ W1 API calls currently preserve legacy behavior (insecure TLS allowed). To enfor
 | `W1_ALLOW_INSECURE_TLS` | `true` | When `false`, backend enforces TLS certificate verification for W1 calls (`/device/link`, refresh, unlink, reset-link). |
 
 ### Default ringserver policy
-After a successful `/device/link`, sender-backend can automatically attach a default ringserver target (UPRI by default). On startup, sender-backend also checks already-linked devices and adds the default target when it is missing, leaving existing extra endpoints in place.
+After a successful `/device/link`, sender-backend can automatically attach a default ringserver target (UP-Diliman by default). On startup, sender-backend also checks already-linked devices and adds the default target when it is missing, leaving existing extra endpoints in place. The built-in fallback is `earthquake.science.upd.edu.ph:16000`.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AUTO_ADD_DEFAULT_RINGSERVER_ON_LINK` | `true` | Auto-add default ringserver after a successful link. |
 | `AUTO_ADD_DEFAULT_RINGSERVER_ON_STARTUP` | `true` | Auto-add default ringserver during sender-backend startup when the device is already linked and the target is missing. |
-| `DEFAULT_RINGSERVER_USERNAME` | `UPRI` | Username label used to resolve default ringserver from `/servers/ringserver-hosts`. |
+| `DEFAULT_RINGSERVER_USERNAME` | `UP-Diliman` | Username label used to resolve default ringserver from `/servers/ringserver-hosts`. |
 | `DEFAULT_RINGSERVER_URL` | _(empty)_ | Optional direct URL override (`protocol://host:port`); when set, username lookup is skipped. |
 | `PROTECTED_RINGSERVER_USERNAME` | `DEFAULT_RINGSERVER_USERNAME` | Ringserver username protected from removal through sender-backend remove APIs. |
 | `PROTECTED_RINGSERVER_URL` | `DEFAULT_RINGSERVER_URL` | Optional direct URL protected from removal. |

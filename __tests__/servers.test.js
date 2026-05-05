@@ -58,7 +58,7 @@ describe('Servers routes', () => {
     expect(updated.find((entry) => entry.url === 'https://example.invalid')).toBeUndefined();
   });
 
-  it('POST /servers/remove allows deleting UP-Diliman default server via API (200)', async () => {
+  it('POST /servers/remove rejects deleting UP-Diliman protected default server (409)', async () => {
     const existing = [
       { institutionName: 'UP-Diliman', url: 'https://earthquake.science.upd.edu.ph:16000' },
     ];
@@ -68,12 +68,12 @@ describe('Servers routes', () => {
       url: 'https://earthquake.science.upd.edu.ph:16000',
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(409);
     const updated = JSON.parse(await fs.readFile(path.join(tempLocalDbs, 'servers.json'), 'utf-8'));
-    expect(updated).toEqual([]);
+    expect(updated).toEqual(existing);
   });
 
-  it('POST /servers/remove rejects deleting UPRI protected default server (409)', async () => {
+  it('POST /servers/remove allows deleting UPRI non-default server via API (200)', async () => {
     const existing = [
       { institutionName: 'UPRI', url: 'earthquake.up.edu.ph:16000' },
     ];
@@ -83,8 +83,8 @@ describe('Servers routes', () => {
       url: 'earthquake.up.edu.ph:16000',
     });
 
-    expect(response.statusCode).toBe(409);
+    expect(response.statusCode).toBe(200);
     const updated = JSON.parse(await fs.readFile(path.join(tempLocalDbs, 'servers.json'), 'utf-8'));
-    expect(updated).toEqual(existing);
+    expect(updated).toEqual([]);
   });
 });
