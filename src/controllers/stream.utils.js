@@ -77,6 +77,13 @@ function deriveStatusFromRetryCount(retryCount) {
   return ALERT_STATUS_ERROR;
 }
 
+function isChildProcessAlive(childProcess) {
+  if (!childProcess) return false;
+  if (childProcess.killed) return false;
+  if (childProcess.exitCode !== null) return false;
+  return true;
+}
+
 function sanitizeDedupeToken(value) {
   return String(value || '')
     .trim()
@@ -442,8 +449,6 @@ async function spawnSlink2dali(receiver_ringserver) {
       const isRetryLog = normalizedMessage.includes('re-connecting') || normalizedMessage.includes('trying again') || normalizedMessage.includes('retry');
       const hasHealthySignal =
         normalizedMessage.includes('write_success') ||
-        normalizedMessage.includes('successfully') ||
-        normalizedMessage.includes(' version') ||
         normalizedMessage.includes('connected to datalink') ||
         normalizedMessage.includes('keep alive') ||
         normalizedMessage.includes('packet');
@@ -454,7 +459,7 @@ async function spawnSlink2dali(receiver_ringserver) {
         // Set the error flag to true
         hasError = true;
       }
-      else if (hasHealthySignal || (!isRetryLog && normalizedMessage.trim())) {
+      else if (hasHealthySignal && !isRetryLog) {
         try {
           await markStreamHealthy(receiver_ringserver, childProcess); // Reset the retryCount to 0 and mark streaming
         } catch (markError) {
@@ -495,5 +500,6 @@ module.exports = {
   clearStreamsObject,
   removeStream,
   reconcileStreamsWithFile,
+  isChildProcessAlive,
   streamsObject,
 };

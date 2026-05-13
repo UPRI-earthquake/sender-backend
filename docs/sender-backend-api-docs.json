@@ -751,7 +751,7 @@
                           },
                           "ringserverUrl": {
                             "type": "string",
-                            "example": "https://earthquake.up.edu.ph"
+                            "example": "https://earthquake.science.upd.edu.ph"
                           },
                           "ringserverPort": {
                             "type": "number",
@@ -812,7 +812,7 @@
                   }
                 },
                 "example": {
-                  "url": "https://earthquake.up.edu.ph",
+                  "url": "https://earthquake.science.upd.edu.ph",
                   "hostName": "UPRI's Ringserver"
                 }
               }
@@ -937,7 +937,7 @@
                   "url"
                 ],
                 "example": {
-                  "url": "https://earthquake.up.edu.ph"
+                  "url": "https://earthquake.science.upd.edu.ph"
                 }
               }
             }

@@ -28,7 +28,7 @@ This repo does not own those bastion assets. This repo owns the device-side tunn
    - `sudo sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`
 3. Write `/etc/upri/sender-remote-tunnel.env` manually with the returned values.
 4. Set the WebSocket transport settings:
-   - `REMOTE_TUNNEL_WSS_URL=wss://earthquake.up.edu.ph`
+   - `REMOTE_TUNNEL_WSS_URL=wss://earthquake.science.upd.edu.ph`
    - `REMOTE_TUNNEL_WSS_PATH_PREFIX=api/ws-tunnel/<secret>`
 5. Start service:
    - `sudo systemctl restart sender-remote-tunnel.service`
@@ -57,10 +57,10 @@ Use the helper script from this repo on the device:
   - `sudo apt-get update`
   - `sudo apt-get install -y openssh-client`
   - `wstunnel` auto-install is attempted from the pinned upstream GitHub release when missing
-- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.up.edu.ph/api/device/tunnel/enroll"`
+- `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
   - optional overrides: `--wss-url ... --wss-path-prefix ...`
 - If you are running from a checked-out repo instead of an installed wrapper, use:
-  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.up.edu.ph/api/device/tunnel/enroll"`
+  - `sudo ./setup-remote-tunnel.sh --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
 - If `--enroll-token` is omitted, helper attempts to auto-discover an existing sender access token from tunnel env and sender token storage.
 
 The helper will:

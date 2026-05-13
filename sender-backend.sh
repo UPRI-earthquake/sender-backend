@@ -50,9 +50,9 @@ IMAGE="${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 # - SENDER_BACKEND_DNS_CHECK_TIMEOUT_SEC: per-host DNS probe timeout in seconds (default: 8)
 
 DNS_MODE_LABEL_KEY="upri.sender-backend.dns-mode"
-DNS_CHECK_HOSTS_DEFAULT="earthquake.up.edu.ph github.com"
+DNS_CHECK_HOSTS_DEFAULT="earthquake.science.upd.edu.ph github.com"
 DNS_FLAGS=()
-AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert"
+AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert"
 AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
 DISK_ALERT_WARN_FREE_PCT_DEFAULT=15
 DISK_ALERT_CRITICAL_FREE_PCT_DEFAULT=8
@@ -4139,7 +4139,7 @@ function create_container() {
             --volume "${SENDER_HOST_SCRIPTS_DIR}:${CONTAINER_HOST_SCRIPTS_DIR}" \
             --volume "${ALERT_RUNTIME_DIR}:${CONTAINER_ALERT_RUNTIME_DIR}" \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
-            --env W1_PROD_IP=earthquake.up.edu.ph/api \
+            --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
             "${alert_env_flags[@]}" \
             --log-driver json-file \
             --log-opt max-size=10m \

@@ -75,12 +75,12 @@ describe('Servers routes', () => {
 
   it('POST /servers/remove allows deleting UPRI non-default server via API (200)', async () => {
     const existing = [
-      { institutionName: 'UPRI', url: 'earthquake.up.edu.ph:16000' },
+      { institutionName: 'UPRI', url: 'earthquake.science.upd.edu.ph:16000' },
     ];
     await fs.writeFile(path.join(tempLocalDbs, 'servers.json'), JSON.stringify(existing));
 
     const response = await request(app).post('/servers/remove').send({
-      url: 'earthquake.up.edu.ph:16000',
+      url: 'earthquake.science.upd.edu.ph:16000',
     });
 
     expect(response.statusCode).toBe(200);
