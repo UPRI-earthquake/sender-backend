@@ -9,7 +9,7 @@ const { responseCodes, responseMessages } = require('./responseCodes')
 const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
 const serversFilePath = () => path.join(localDbDir(), 'servers.json');
 const DEFAULT_RINGSERVER_USERNAME_FALLBACK = 'UP-Diliman';
-const DEFAULT_RINGSERVER_URL_FALLBACK = 'earthquake.science.upd.edu.ph:16000';
+const DEFAULT_RINGSERVER_URL_FALLBACK = 'earthquake.up.edu.ph:16000';
 
 function parseBooleanEnv(value, defaultValue = false) {
   if (value === undefined || value === null || String(value).trim() === '') {

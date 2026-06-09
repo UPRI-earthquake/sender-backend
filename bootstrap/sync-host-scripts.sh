@@ -6,7 +6,7 @@ LOCK_DIR="/tmp/upri-host-script-sync.lock"
 LOCK_TIMEOUT_SEC="${SENDER_SCRIPT_SYNC_TIMEOUT_SEC:-20}"
 BUNDLE_VERSION="${SENDER_IMAGE_BUNDLE_VERSION:-unknown}"
 BUNDLE_TAG="${SENDER_BUNDLE_TAG:-latest}"
-ALERT_ENDPOINT="${AUTO_UPDATE_ALERT_ENDPOINT:-https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert}"
+ALERT_ENDPOINT="${AUTO_UPDATE_ALERT_ENDPOINT:-https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert}"
 ALERT_TIMEOUT_SEC="${AUTO_UPDATE_ALERT_TIMEOUT_SEC:-8}"
 ALERT_RUNTIME_ENV_FILE="${RSHAKE_ALERT_RUNTIME_ENV_FILE:-/opt/upri/runtime/alert.env}"
 

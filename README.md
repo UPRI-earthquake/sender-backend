@@ -149,7 +149,7 @@ Automatic setup helper (recommended to reduce manual steps on deployed devices):
   - `sudo apt-get install -y openssh-client`
   - `wstunnel` auto-install is attempted from the pinned upstream GitHub release when missing
 - Example:
-  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.science.upd.edu.ph/api/device/tunnel/enroll"`
+  - `sudo sender-setup-remote-tunnel --enroll-token "<sensor token>" --enroll-endpoint "https://earthquake.up.edu.ph/api/device/tunnel/enroll"`
   - optional overrides: `--wss-url ... --wss-path-prefix ...`
 - If `--enroll-token` is omitted, the helper attempts to auto-discover an existing sender access token from current tunnel env and sender token storage.
 - The helper writes `/etc/upri/sender-remote-tunnel.env`, runs `sender-backend INSTALL_REMOTE_TUNNEL_SERVICE`, restarts `sender-remote-tunnel.service`, and prints tunnel status.
@@ -220,7 +220,7 @@ W1 API calls currently preserve legacy behavior (insecure TLS allowed). To enfor
 | `W1_ALLOW_INSECURE_TLS` | `true` | When `false`, backend enforces TLS certificate verification for W1 calls (`/device/link`, refresh, unlink, reset-link). |
 
 ### Default ringserver policy
-After a successful `/device/link`, sender-backend can automatically attach a default ringserver target (UP-Diliman by default). On startup, sender-backend also checks already-linked devices and adds the default target when it is missing, leaving existing extra endpoints in place. The built-in fallback is `earthquake.science.upd.edu.ph:16000`.
+After a successful `/device/link`, sender-backend can automatically attach a default ringserver target (UP-Diliman by default). On startup, sender-backend also checks already-linked devices and adds the default target when it is missing, leaving existing extra endpoints in place. The built-in fallback is `earthquake.up.edu.ph:16000`.
 
 | Variable | Default | Description |
 | --- | --- | --- |

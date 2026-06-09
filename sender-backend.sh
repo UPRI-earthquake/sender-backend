@@ -50,9 +50,9 @@ IMAGE="${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 # - SENDER_BACKEND_DNS_CHECK_TIMEOUT_SEC: per-host DNS probe timeout in seconds (default: 8)
 
 DNS_MODE_LABEL_KEY="upri.sender-backend.dns-mode"
-DNS_CHECK_HOSTS_DEFAULT="earthquake.science.upd.edu.ph github.com"
+DNS_CHECK_HOSTS_DEFAULT="earthquake.up.edu.ph github.com"
 DNS_FLAGS=()
-AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert"
+AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert"
 AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
 DISK_ALERT_WARN_FREE_PCT_DEFAULT=15
 DISK_ALERT_CRITICAL_FREE_PCT_DEFAULT=8
@@ -244,6 +244,16 @@ function extract_image_repo() {
 function is_digest_ref() {
     local image_ref="$1"
     [[ "$image_ref" == *@sha256:* ]]
+}
+
+function get_repo_digest_for_image_ref() {
+    local image_ref="$1"
+    local repo
+    local digest_ref
+
+    repo="$(extract_image_repo "$image_ref")"
+    digest_ref="$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$image_ref" 2>/dev/null | awk -v repo="$repo" '$0 ~ "^" repo "@sha256:" {print; exit}')"
+    printf "%s" "$digest_ref"
 }
 
 function resolve_image_ref() {
@@ -2828,8 +2838,8 @@ function resolve_bundle_targets() {
         return 1
     fi
 
-    LAST_BACKEND_IMAGE_REF="$backend_resolved"
-    LAST_FRONTEND_IMAGE_REF="$frontend_resolved"
+    LAST_BACKEND_IMAGE_REF="$backend_tag_ref"
+    LAST_FRONTEND_IMAGE_REF="$frontend_tag_ref"
     LAST_BACKEND_DIGEST="${backend_resolved##*@}"
     LAST_FRONTEND_DIGEST="${frontend_resolved##*@}"
     LAST_BUNDLE_VERSION="${backend_version:-unknown}"
@@ -3049,7 +3059,7 @@ function update_stack_with_alert() {
     backend_current_digest="$backend_previous_ref"
     frontend_current_digest="$frontend_previous_ref"
 
-    if [[ -n "$backend_current_digest" && "$backend_current_digest" == "$target_backend_ref" ]]; then
+    if [[ -n "$backend_current_digest" && -n "$target_backend_digest" && "$backend_current_digest" == "${SENDER_BACKEND_IMAGE_REPO}@${target_backend_digest}" ]]; then
         backend_exit=0
         backend_pull_state="no-change"
         backend_result="no-change"
@@ -3069,7 +3079,7 @@ function update_stack_with_alert() {
         fi
     fi
 
-    if [[ -n "$frontend_current_digest" && "$frontend_current_digest" == "$target_frontend_ref" ]]; then
+    if [[ -n "$frontend_current_digest" && -n "$target_frontend_digest" && "$frontend_current_digest" == "${SENDER_FRONTEND_IMAGE_REPO}@${target_frontend_digest}" ]]; then
         frontend_exit=0
         frontend_pull_state="no-change"
         frontend_result="no-change"
@@ -3098,8 +3108,8 @@ function update_stack_with_alert() {
         attempt_auto_update_rollback \
             "$backend_previous_ref" \
             "$frontend_previous_ref" \
-            "$target_backend_ref" \
-            "$target_frontend_ref" || true
+            "${SENDER_BACKEND_IMAGE_REPO}@${target_backend_digest}" \
+            "${SENDER_FRONTEND_IMAGE_REPO}@${target_frontend_digest}" || true
     fi
 
     if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
@@ -3165,6 +3175,7 @@ function update_stack_with_alert() {
 function update_container_with_state() {
     local backend_output backend_exit backend_pull_state backend_result
     local target_ref="$1"
+    local target_digest_ref
     local target_bundle_version
     local current_digest
 
@@ -3177,17 +3188,18 @@ function update_container_with_state() {
     LAST_ROLLBACK_FRONTEND_TARGET="none"
 
     if [[ -z "$target_ref" ]]; then
-        target_ref="$(resolve_image_ref "${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}")" || return 1
+        target_ref="${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
     fi
+    target_digest_ref="$(resolve_image_ref "$target_ref")" || return 1
     LAST_BACKEND_IMAGE_REF="$target_ref"
-    LAST_BACKEND_DIGEST="${target_ref##*@}"
-    target_bundle_version="$(get_image_label "$target_ref" "org.upri.sender.bundle.version")"
+    LAST_BACKEND_DIGEST="${target_digest_ref##*@}"
+    target_bundle_version="$(get_image_label "$target_digest_ref" "org.upri.sender.bundle.version")"
     LAST_BUNDLE_VERSION="${target_bundle_version:-unknown}"
     LAST_FRONTEND_BUNDLE_VERSION="$LAST_BUNDLE_VERSION"
     LAST_FRONTEND_IMAGE_REF="${SENDER_FRONTEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 
     current_digest="$(get_container_repo_digest "$CONTAINER" "$SENDER_BACKEND_IMAGE_REPO")"
-    if [[ -n "$current_digest" && "$current_digest" == "$target_ref" ]]; then
+    if [[ -n "$current_digest" && "$current_digest" == "$target_digest_ref" ]]; then
         backend_exit=0
         backend_pull_state="no-change"
         backend_result="no-change"
@@ -3985,7 +3997,7 @@ function pull_container() {
         return 1
     }
 
-    LAST_BACKEND_IMAGE_REF="$resolved_ref"
+    LAST_BACKEND_IMAGE_REF="$requested_ref"
     LAST_BACKEND_DIGEST="${resolved_ref##*@}"
     LAST_BUNDLE_VERSION="$(get_image_label "$resolved_ref" "org.upri.sender.bundle.version")"
     if [[ -z "$LAST_BUNDLE_VERSION" ]]; then
@@ -4028,18 +4040,19 @@ function create_container() {
     local dns_mode="${1:-auto}"
     local requested_ref="${2:-${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}}"
     local target_image_ref="$requested_ref"
+    local target_digest_ref=""
     local docker_network_flag
     local -a alert_env_flags=()
 
-    if ! is_digest_ref "$requested_ref"; then
-        target_image_ref="$(resolve_image_ref "$requested_ref")" || {
-            echo -en "[\e[1;31mFAILED\e[0m] "
-            echo "Failed to resolve image for container creation: $requested_ref"
-            return 1
-        }
-    fi
+    target_digest_ref="$(get_repo_digest_for_image_ref "$target_image_ref")"
     LAST_BACKEND_IMAGE_REF="$target_image_ref"
-    LAST_BACKEND_DIGEST="${target_image_ref##*@}"
+    if [[ -n "$target_digest_ref" ]]; then
+        LAST_BACKEND_DIGEST="${target_digest_ref##*@}"
+    elif is_digest_ref "$target_image_ref"; then
+        LAST_BACKEND_DIGEST="${target_image_ref##*@}"
+    else
+        LAST_BACKEND_DIGEST="unknown"
+    fi
     ensure_host_scripts_dir || true
     write_alert_runtime_env_template_if_missing || true
 
@@ -4139,7 +4152,7 @@ function create_container() {
             --volume "${SENDER_HOST_SCRIPTS_DIR}:${CONTAINER_HOST_SCRIPTS_DIR}" \
             --volume "${ALERT_RUNTIME_DIR}:${CONTAINER_ALERT_RUNTIME_DIR}" \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
-            --env W1_PROD_IP=earthquake.science.upd.edu.ph/api \
+            --env W1_PROD_IP=earthquake.up.edu.ph/api \
             "${alert_env_flags[@]}" \
             --log-driver json-file \
             --log-opt max-size=10m \

@@ -16,7 +16,7 @@ ALERT_RUNTIME_DIR="${ALERT_RUNTIME_DIR:-$ALERT_RUNTIME_DIR_DEFAULT}"
 ALERT_RUNTIME_ENV_FILE="${ALERT_RUNTIME_ENV_FILE:-$ALERT_RUNTIME_ENV_FILE_DEFAULT}"
 IMAGE="${SENDER_FRONTEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 
-AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.science.upd.edu.ph/api/messaging/restricted/rshake-alert"
+AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert"
 AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
 AUTO_UPDATE_STATE_FILE_DEFAULT="/var/lib/upri-sender/update-state.json"
 AUTO_UPDATE_STATE_FILE="${AUTO_UPDATE_STATE_FILE:-$AUTO_UPDATE_STATE_FILE_DEFAULT}"
@@ -100,6 +100,16 @@ function extract_image_repo() {
 function is_digest_ref() {
     local image_ref="$1"
     [[ "$image_ref" == *@sha256:* ]]
+}
+
+function get_repo_digest_for_image_ref() {
+    local image_ref="$1"
+    local repo
+    local digest_ref
+
+    repo="$(extract_image_repo "$image_ref")"
+    digest_ref="$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$image_ref" 2>/dev/null | awk -v repo="$repo" '$0 ~ "^" repo "@sha256:" {print; exit}')"
+    printf "%s" "$digest_ref"
 }
 
 function resolve_image_ref() {
@@ -460,7 +470,7 @@ function pull_container() {
         return 1
     }
 
-    LAST_FRONTEND_IMAGE_REF="$resolved_ref"
+    LAST_FRONTEND_IMAGE_REF="$requested_ref"
     LAST_FRONTEND_DIGEST="${resolved_ref##*@}"
     LAST_FRONTEND_BUNDLE_VERSION="$(get_image_label "$resolved_ref" "org.upri.sender.bundle.version")"
     if [[ -z "$LAST_FRONTEND_BUNDLE_VERSION" ]]; then
@@ -505,16 +515,17 @@ function create_network() {
 function create_container() {
     local requested_ref="${1:-${SENDER_FRONTEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}}"
     local target_image_ref="$requested_ref"
+    local target_digest_ref=""
 
-    if ! is_digest_ref "$requested_ref"; then
-        target_image_ref="$(resolve_image_ref "$requested_ref")" || {
-            echo -en "[\e[1;31mFAILED\e[0m] "
-            echo "Failed to resolve image for container creation: $requested_ref"
-            return 1
-        }
-    fi
     LAST_FRONTEND_IMAGE_REF="$target_image_ref"
-    LAST_FRONTEND_DIGEST="${target_image_ref##*@}"
+    target_digest_ref="$(get_repo_digest_for_image_ref "$target_image_ref")"
+    if [[ -n "$target_digest_ref" ]]; then
+        LAST_FRONTEND_DIGEST="${target_digest_ref##*@}"
+    elif is_digest_ref "$target_image_ref"; then
+        LAST_FRONTEND_DIGEST="${target_image_ref##*@}"
+    else
+        LAST_FRONTEND_DIGEST="unknown"
+    fi
     LAST_FRONTEND_BUNDLE_VERSION="$(get_image_label "$target_image_ref" "org.upri.sender.bundle.version")"
     if [[ -z "$LAST_FRONTEND_BUNDLE_VERSION" ]]; then
         LAST_FRONTEND_BUNDLE_VERSION="unknown"
@@ -720,18 +731,19 @@ case $1 in
         current_digest="$(get_container_repo_digest "$CONTAINER" "$SENDER_FRONTEND_IMAGE_REPO")"
         pull_container "$target_ref"
         pull_exit=$?
-        target_resolved_ref="$LAST_FRONTEND_IMAGE_REF"
+        target_image_ref="$LAST_FRONTEND_IMAGE_REF"
+        target_digest_ref="$LAST_FRONTEND_DIGEST"
 
         if [[ $pull_exit -ne 0 ]]; then
             update_exit=$pull_exit
             frontend_pull_state="failed"
-        elif [[ -n "$current_digest" && "$current_digest" == "$target_resolved_ref" ]]; then
+        elif [[ -n "$current_digest" && -n "$target_digest_ref" && "$current_digest" == "${SENDER_FRONTEND_IMAGE_REPO}@${target_digest_ref}" ]]; then
             update_exit=0
             frontend_pull_state="no-change"
             echo -en "[  \e[32mOK\e[0m  ] "
             echo "Frontend image already matches target digest."
         else
-            update_container "$target_resolved_ref"
+            update_container "$target_image_ref"
             update_exit=$?
             if [[ $update_exit -eq 0 ]]; then
                 frontend_pull_state="updated"
@@ -743,7 +755,7 @@ case $1 in
         emit_chained_auto_update_alert \
             "$update_exit" \
             "$frontend_pull_state" \
-            "$target_resolved_ref" \
+            "$target_image_ref" \
             "$LAST_FRONTEND_DIGEST" \
             "$LAST_FRONTEND_BUNDLE_VERSION"
         exit "$update_exit"

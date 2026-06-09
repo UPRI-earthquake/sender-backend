@@ -41,8 +41,7 @@ const deviceStatusPath = '/device/status';
 const alertCredentialPath = '/device/alert-credential';
 const allowInsecureW1Tls = String(process.env.W1_ALLOW_INSECURE_TLS || 'true').trim().toLowerCase() === 'true';
 const httpsAgent = new https.Agent({ rejectUnauthorized: !allowInsecureW1Tls });
-const legacyProdW1Host = 'earthquake.science.upd.edu.ph/api';
-const defaultProdW1Host = 'earthquake.science.upd.edu.ph/api';
+const defaultProdW1Host = 'earthquake.up.edu.ph/api';
 
 function formatRelinkMessage(reason) {
   if (!reason) {
@@ -349,9 +348,7 @@ async function getStoredDeviceInfo() {
 function buildW1BaseUrl() {
   if (process.env.NODE_ENV === 'production') {
     const configuredHost = String(process.env.W1_PROD_IP || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    const prodHost = !configuredHost || configuredHost === legacyProdW1Host
-      ? defaultProdW1Host
-      : configuredHost;
+    const prodHost = configuredHost || defaultProdW1Host;
     return `https://${prodHost}`;
   }
 
