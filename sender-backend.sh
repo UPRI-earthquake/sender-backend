@@ -52,6 +52,7 @@ IMAGE="${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 DNS_MODE_LABEL_KEY="upri.sender-backend.dns-mode"
 DNS_CHECK_HOSTS_DEFAULT="earthquake.up.edu.ph github.com"
 DNS_FLAGS=()
+W1_PROD_IP_DEFAULT="earthquake.up.edu.ph/api"
 AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert"
 AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
 DISK_ALERT_WARN_FREE_PCT_DEFAULT=15
@@ -324,6 +325,39 @@ function get_container_repo_digest() {
 
     digest_ref="$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$image_id" 2>/dev/null | awk -v repo="$repo" '$0 ~ "^" repo "@sha256:" {print; exit}')"
     printf "%s" "$digest_ref"
+}
+
+function get_container_env_value() {
+    local container_name="$1"
+    local env_key="$2"
+
+    docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null \
+        | awk -F= -v key="$env_key" '$1 == key {sub("^[^=]*=", ""); print; exit}'
+}
+
+function backend_container_config_drifted() {
+    local current_w1
+    local current_bundle_version
+
+    if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    current_w1="$(get_container_env_value "$CONTAINER" "W1_PROD_IP")"
+    if [[ "$current_w1" != "$W1_PROD_IP_DEFAULT" ]]; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Backend container env drift detected: W1_PROD_IP=${current_w1:-unset}, expected $W1_PROD_IP_DEFAULT."
+        return 0
+    fi
+
+    current_bundle_version="$(get_container_env_value "$CONTAINER" "SENDER_IMAGE_BUNDLE_VERSION")"
+    if [[ -n "$LAST_BUNDLE_VERSION" && "$LAST_BUNDLE_VERSION" != "unknown" && "$current_bundle_version" != "$LAST_BUNDLE_VERSION" ]]; then
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "Backend container env drift detected: SENDER_IMAGE_BUNDLE_VERSION=${current_bundle_version:-unset}, expected $LAST_BUNDLE_VERSION."
+        return 0
+    fi
+
+    return 1
 }
 
 function cleanup_dangling_images_compatible() {
@@ -3059,7 +3093,7 @@ function update_stack_with_alert() {
     backend_current_digest="$backend_previous_ref"
     frontend_current_digest="$frontend_previous_ref"
 
-    if [[ -n "$backend_current_digest" && -n "$target_backend_digest" && "$backend_current_digest" == "${SENDER_BACKEND_IMAGE_REPO}@${target_backend_digest}" ]]; then
+    if [[ -n "$backend_current_digest" && -n "$target_backend_digest" && "$backend_current_digest" == "${SENDER_BACKEND_IMAGE_REPO}@${target_backend_digest}" ]] && ! backend_container_config_drifted; then
         backend_exit=0
         backend_pull_state="no-change"
         backend_result="no-change"
@@ -3199,7 +3233,7 @@ function update_container_with_state() {
     LAST_FRONTEND_IMAGE_REF="${SENDER_FRONTEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 
     current_digest="$(get_container_repo_digest "$CONTAINER" "$SENDER_BACKEND_IMAGE_REPO")"
-    if [[ -n "$current_digest" && "$current_digest" == "$target_digest_ref" ]]; then
+    if [[ -n "$current_digest" && "$current_digest" == "$target_digest_ref" ]] && ! backend_container_config_drifted; then
         backend_exit=0
         backend_pull_state="no-change"
         backend_result="no-change"
@@ -4124,7 +4158,9 @@ function create_container() {
     alert_env_flags+=(--env "SENDER_HOST_SCRIPTS_DIR=${CONTAINER_HOST_SCRIPTS_DIR}")
     alert_env_flags+=(--env "RSHAKE_ALERT_RUNTIME_ENV_FILE=${CONTAINER_ALERT_RUNTIME_ENV_FILE}")
     alert_env_flags+=(--env "SENDER_BUNDLE_TAG=${SENDER_BUNDLE_TAG}")
-    alert_env_flags+=(--env "SENDER_IMAGE_BUNDLE_VERSION=${LAST_BUNDLE_VERSION}")
+    if [[ -n "$LAST_BUNDLE_VERSION" && "$LAST_BUNDLE_VERSION" != "unknown" ]]; then
+        alert_env_flags+=(--env "SENDER_IMAGE_BUNDLE_VERSION=${LAST_BUNDLE_VERSION}")
+    fi
 
     if docker inspect "$CONTAINER" >/dev/null 2>&1; then
         echo -en "[  \e[32mOK\e[0m  ] "
@@ -4152,7 +4188,7 @@ function create_container() {
             --volume "${SENDER_HOST_SCRIPTS_DIR}:${CONTAINER_HOST_SCRIPTS_DIR}" \
             --volume "${ALERT_RUNTIME_DIR}:${CONTAINER_ALERT_RUNTIME_DIR}" \
             --env LOCALDBS_DIRECTORY=/app/localDBs \
-            --env W1_PROD_IP=earthquake.up.edu.ph/api \
+            --env "W1_PROD_IP=${W1_PROD_IP_DEFAULT}" \
             "${alert_env_flags[@]}" \
             --log-driver json-file \
             --log-opt max-size=10m \

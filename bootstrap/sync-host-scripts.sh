@@ -2,6 +2,7 @@
 
 HOST_SCRIPTS_DIR="${SENDER_HOST_SCRIPTS_DIR:-/host-scripts}"
 PAYLOAD_DIR="/opt/upri/scripts/payload"
+BUNDLE_VERSION_FILE="/opt/upri/scripts/bundle-version"
 LOCK_DIR="/tmp/upri-host-script-sync.lock"
 LOCK_TIMEOUT_SEC="${SENDER_SCRIPT_SYNC_TIMEOUT_SEC:-20}"
 BUNDLE_VERSION="${SENDER_IMAGE_BUNDLE_VERSION:-unknown}"
@@ -9,6 +10,13 @@ BUNDLE_TAG="${SENDER_BUNDLE_TAG:-latest}"
 ALERT_ENDPOINT="${AUTO_UPDATE_ALERT_ENDPOINT:-https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert}"
 ALERT_TIMEOUT_SEC="${AUTO_UPDATE_ALERT_TIMEOUT_SEC:-8}"
 ALERT_RUNTIME_ENV_FILE="${RSHAKE_ALERT_RUNTIME_ENV_FILE:-/opt/upri/runtime/alert.env}"
+
+if [ -r "$BUNDLE_VERSION_FILE" ]; then
+  file_bundle_version="$(head -n 1 "$BUNDLE_VERSION_FILE" | tr -d '\r' | xargs)"
+  if [ -n "$file_bundle_version" ] && [ "$file_bundle_version" != "unknown" ]; then
+    BUNDLE_VERSION="$file_bundle_version"
+  fi
+fi
 
 if [ -z "${RSHAKE_ALERT_SHARED_SECRET:-}" ] && [ -r "$ALERT_RUNTIME_ENV_FILE" ]; then
   RSHAKE_ALERT_SHARED_SECRET="$(
@@ -96,6 +104,31 @@ release_lock() {
   rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
 }
 
+payload_differs() {
+  payload_name="$1"
+  payload_path="$PAYLOAD_DIR/$payload_name"
+  target_path="$HOST_SCRIPTS_DIR/$payload_name"
+
+  if [ ! -f "$payload_path" ]; then
+    return 1
+  fi
+  if [ ! -x "$target_path" ]; then
+    return 0
+  fi
+  ! cmp -s "$payload_path" "$target_path"
+}
+
+install_payload_script() {
+  payload_name="$1"
+  payload_path="$PAYLOAD_DIR/$payload_name"
+  target_path="$HOST_SCRIPTS_DIR/$payload_name"
+
+  if [ ! -f "$payload_path" ]; then
+    return 0
+  fi
+  install -m 0755 "$payload_path" "$target_path" >/dev/null 2>&1
+}
+
 if [ ! -d "$PAYLOAD_DIR" ]; then
   log_warn "Host script payload directory missing: $PAYLOAD_DIR"
   post_sync_failure_alert "missing-payload-dir"
@@ -119,6 +152,8 @@ marker_file="$HOST_SCRIPTS_DIR/.bundle-version"
 need_update=0
 if [ ! -x "$HOST_SCRIPTS_DIR/sender-backend" ] || [ ! -x "$HOST_SCRIPTS_DIR/sender-frontend" ]; then
   need_update=1
+elif payload_differs "sender-backend" || payload_differs "sender-frontend" || payload_differs "setup-remote-tunnel"; then
+  need_update=1
 elif [ ! -r "$marker_file" ]; then
   need_update=1
 else
@@ -134,17 +169,24 @@ if [ "$need_update" -eq 0 ]; then
   exit 0
 fi
 
-if ! install -m 0755 "$PAYLOAD_DIR/sender-backend" "$HOST_SCRIPTS_DIR/sender-backend" >/dev/null 2>&1; then
+if ! install_payload_script "sender-backend"; then
   release_lock
   log_warn "Failed to install sender-backend payload script."
   post_sync_failure_alert "backend-install-failed"
   exit 0
 fi
 
-if ! install -m 0755 "$PAYLOAD_DIR/sender-frontend" "$HOST_SCRIPTS_DIR/sender-frontend" >/dev/null 2>&1; then
+if ! install_payload_script "sender-frontend"; then
   release_lock
   log_warn "Failed to install sender-frontend payload script."
   post_sync_failure_alert "frontend-install-failed"
+  exit 0
+fi
+
+if ! install_payload_script "setup-remote-tunnel"; then
+  release_lock
+  log_warn "Failed to install setup-remote-tunnel payload script."
+  post_sync_failure_alert "tunnel-setup-install-failed"
   exit 0
 fi
 

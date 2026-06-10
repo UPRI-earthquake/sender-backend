@@ -38,10 +38,13 @@ RUN npm ci --only=production --loglevel=verbose
 COPY src/ ./src/
 COPY sender-backend.sh /opt/upri/scripts/payload/sender-backend
 COPY bootstrap/host-scripts/sender-frontend /opt/upri/scripts/payload/sender-frontend
+COPY setup-remote-tunnel.sh /opt/upri/scripts/payload/setup-remote-tunnel
 COPY bootstrap/sync-host-scripts.sh /opt/upri/scripts/sync-host-scripts.sh
 COPY bootstrap/container-entrypoint.sh /opt/upri/scripts/container-entrypoint.sh
-RUN chmod +x /opt/upri/scripts/payload/sender-backend \
+RUN printf '%s\n' "$BUNDLE_VERSION" > /opt/upri/scripts/bundle-version \
+    && chmod +x /opt/upri/scripts/payload/sender-backend \
     /opt/upri/scripts/payload/sender-frontend \
+    /opt/upri/scripts/payload/setup-remote-tunnel \
     /opt/upri/scripts/sync-host-scripts.sh \
     /opt/upri/scripts/container-entrypoint.sh
 
