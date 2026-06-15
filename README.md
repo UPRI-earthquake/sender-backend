@@ -80,6 +80,12 @@ Host update scripts resolve tags to digests before deployment:
 
 State snapshots are written to `/var/lib/upri-sender/update-state.json` (fallback to `/tmp/upri-sender/update-state.json` if permissions prevent writing to `/var/lib`).
 
+During `UPDATE_STACK`, sender-backend also evaluates legacy sender-domain drift and attempts host-side migration for supported config:
+- backend container `W1_PROD_IP` drift is corrected by the normal container recreate/update path
+- `/etc/upri/sender-remote-tunnel.env` old-domain values are rewritten to `earthquake.up.edu.ph` when detected
+- if the tunnel config was changed and is enabled/complete, `sender-remote-tunnel.service` is restarted automatically
+- migration outcome is recorded in the auto-update state file and included in the admin-only auto-update alert payload
+
 ### Sender Infrastructure Alerts
 Sender posts admin-only RShake alerts for:
 - Disk monitor (runs with daily `UPDATE_STACK` timer): `DISK_SPACE_WARN`, `DISK_SPACE_CRITICAL`, `DISK_SPACE_RECOVERY`
@@ -129,6 +135,8 @@ The watchdog checks backend/frontend container runtime state and attempts start/
 - `sender-remote-tunnel.service` (always-on reverse tunnel via `wstunnel`)
 
 `install.sh` provisions the service, but tunnel enrollment/config still depends on `/etc/upri/sender-remote-tunnel.env`.
+
+When `UPDATE_STACK` detects legacy `earthquake.science.upd.edu.ph` values in the tunnel env file, it rewrites only the stale domain fields, preserves the existing token/keys/device-specific values, and attempts a tunnel service restart.
 
 Scope split:
 - EarthquakeHub commons owns bastion scripts, registry state, and operator-side access flow.
@@ -220,13 +228,13 @@ W1 API calls currently preserve legacy behavior (insecure TLS allowed). To enfor
 | `W1_ALLOW_INSECURE_TLS` | `true` | When `false`, backend enforces TLS certificate verification for W1 calls (`/device/link`, refresh, unlink, reset-link). |
 
 ### Default ringserver policy
-After a successful `/device/link`, sender-backend can automatically attach a default ringserver target (UP-Diliman by default). On startup, sender-backend also checks already-linked devices and adds the default target when it is missing, leaving existing extra endpoints in place. The built-in fallback is `earthquake.up.edu.ph:16000`.
+After a successful `/device/link`, sender-backend can automatically attach a default ringserver target (UPRI by default). On startup, sender-backend also checks already-linked devices and adds the default target when it is missing, leaving existing extra endpoints in place. The built-in fallback is `earthquake.up.edu.ph:16000`.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AUTO_ADD_DEFAULT_RINGSERVER_ON_LINK` | `true` | Auto-add default ringserver after a successful link. |
 | `AUTO_ADD_DEFAULT_RINGSERVER_ON_STARTUP` | `true` | Auto-add default ringserver during sender-backend startup when the device is already linked and the target is missing. |
-| `DEFAULT_RINGSERVER_USERNAME` | `UP-Diliman` | Username label used to resolve default ringserver from `/servers/ringserver-hosts`. |
+| `DEFAULT_RINGSERVER_USERNAME` | `UPRI` | Username label used to resolve default ringserver from `/servers/ringserver-hosts`. |
 | `DEFAULT_RINGSERVER_URL` | _(empty)_ | Optional direct URL override (`protocol://host:port`); when set, username lookup is skipped. |
 | `PROTECTED_RINGSERVER_USERNAME` | `DEFAULT_RINGSERVER_USERNAME` | Ringserver username protected from removal through sender-backend remove APIs. |
 | `PROTECTED_RINGSERVER_URL` | `DEFAULT_RINGSERVER_URL` | Optional direct URL protected from removal. |

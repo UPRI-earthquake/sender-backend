@@ -52,6 +52,8 @@ IMAGE="${SENDER_BACKEND_IMAGE_REPO}:${SENDER_BUNDLE_TAG}"
 DNS_MODE_LABEL_KEY="upri.sender-backend.dns-mode"
 DNS_CHECK_HOSTS_DEFAULT="earthquake.up.edu.ph github.com"
 DNS_FLAGS=()
+LEGACY_SENDER_DOMAIN="earthquake.science.upd.edu.ph"
+CURRENT_SENDER_DOMAIN="earthquake.up.edu.ph"
 W1_PROD_IP_DEFAULT="earthquake.up.edu.ph/api"
 AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert"
 AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
@@ -136,6 +138,14 @@ WATCHDOG_STATE_FILE_PATH="$WATCHDOG_STATE_FILE"
 REMOTE_TUNNEL_STATE_FILE_PATH="$REMOTE_TUNNEL_STATE_FILE"
 REMOTE_TUNNEL_ENABLED_VALUE="false"
 REMOTE_TUNNEL_DEVICE_ID_VALUE=""
+LAST_MIGRATION_RESULT="not-run"
+LAST_MIGRATION_SUMMARY="not-run"
+LAST_MIGRATION_CHANGED="false"
+LAST_MIGRATION_BACKEND_ENV_RESULT="not-run"
+LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="not-run"
+LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="not-run"
+LAST_MIGRATION_NEXT_STEP="none"
+LAST_MIGRATION_REMAINING="none"
 
 function load_alert_runtime_env() {
     if [[ -r "$ALERT_RUNTIME_ENV_FILE" ]]; then
@@ -358,6 +368,183 @@ function backend_container_config_drifted() {
     fi
 
     return 1
+}
+
+function backend_container_has_legacy_domain_quiet() {
+    local current_w1
+
+    if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    current_w1="$(get_container_env_value "$CONTAINER" "W1_PROD_IP")"
+    [[ "$current_w1" == *"$LEGACY_SENDER_DOMAIN"* ]]
+}
+
+function remote_tunnel_env_has_legacy_domain() {
+    local env_file="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
+
+    [[ -r "$env_file" ]] || return 1
+    grep -q "$LEGACY_SENDER_DOMAIN" "$env_file" 2>/dev/null
+}
+
+function reset_auto_update_migration_state() {
+    LAST_MIGRATION_RESULT="not-needed"
+    LAST_MIGRATION_SUMMARY="No stale migration config was detected."
+    LAST_MIGRATION_CHANGED="false"
+    LAST_MIGRATION_BACKEND_ENV_RESULT="aligned"
+    LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="not-needed"
+    LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="not-needed"
+    LAST_MIGRATION_NEXT_STEP="none"
+    LAST_MIGRATION_REMAINING="none"
+}
+
+function append_migration_follow_up() {
+    local next_step="$1"
+    local remaining="$2"
+
+    if [[ -n "$next_step" && "$next_step" != "none" ]]; then
+        if [[ "$LAST_MIGRATION_NEXT_STEP" == "none" ]]; then
+            LAST_MIGRATION_NEXT_STEP="$next_step"
+        elif [[ ",$LAST_MIGRATION_NEXT_STEP," != *",$next_step,"* ]]; then
+            LAST_MIGRATION_NEXT_STEP="${LAST_MIGRATION_NEXT_STEP},${next_step}"
+        fi
+    fi
+
+    if [[ -n "$remaining" && "$remaining" != "none" ]]; then
+        if [[ "$LAST_MIGRATION_REMAINING" == "none" ]]; then
+            LAST_MIGRATION_REMAINING="$remaining"
+        elif [[ ",$LAST_MIGRATION_REMAINING," != *",$remaining,"* ]]; then
+            LAST_MIGRATION_REMAINING="${LAST_MIGRATION_REMAINING},${remaining}"
+        fi
+    fi
+}
+
+function migrate_remote_tunnel_env_domains() {
+    local env_file="${REMOTE_TUNNEL_ENV_FILE:-$REMOTE_TUNNEL_ENV_FILE_DEFAULT}"
+    local tmp_file
+    local config_status
+
+    if [[ ! -r "$env_file" ]]; then
+        LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="missing-env-file"
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="not-needed"
+        return 1
+    fi
+
+    if ! remote_tunnel_env_has_legacy_domain; then
+        LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="already-aligned"
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="not-needed"
+        return 1
+    fi
+
+    tmp_file="$(mktemp "/tmp/upri-sender-remote-tunnel-migrate.XXXXXX")" || {
+        LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="rewrite-failed"
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="not-run"
+        append_migration_follow_up "manually-update-remote-tunnel-env" "remote-tunnel-env-stale"
+        return 1
+    }
+
+    sed "s/${LEGACY_SENDER_DOMAIN}/${CURRENT_SENDER_DOMAIN}/g" "$env_file" > "$tmp_file"
+    if ! install_data_payload "$tmp_file" "$env_file" 0600; then
+        rm -f "$tmp_file" >/dev/null 2>&1
+        LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="rewrite-failed"
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="not-run"
+        append_migration_follow_up "manually-update-remote-tunnel-env" "remote-tunnel-env-stale"
+        return 1
+    fi
+    rm -f "$tmp_file" >/dev/null 2>&1
+
+    LAST_MIGRATION_CHANGED="true"
+    LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="migrated"
+
+    load_remote_tunnel_env
+    config_status=0
+    remote_tunnel_validate_config >/dev/null 2>&1 || config_status=$?
+    if ! is_truthy "${REMOTE_TUNNEL_ENABLED_VALUE:-false}"; then
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="skipped-disabled"
+        return 0
+    fi
+    if [[ $config_status -eq 3 ]]; then
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="skipped-incomplete-config"
+        append_migration_follow_up "complete-remote-tunnel-config" "remote-tunnel-config-incomplete"
+        return 0
+    fi
+    if [[ ! -f "$REMOTE_TUNNEL_SERVICE_FILE" ]]; then
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="skipped-service-missing"
+        append_migration_follow_up "install-remote-tunnel-service" "remote-tunnel-service-not-installed"
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="skipped-no-systemctl"
+        append_migration_follow_up "restart-remote-tunnel-service" "remote-tunnel-service-not-restarted"
+        return 0
+    fi
+    if systemctl restart "$REMOTE_TUNNEL_SERVICE" >/dev/null 2>&1; then
+        LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="restarted"
+        return 0
+    fi
+
+    LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="restart-failed"
+    append_migration_follow_up "check-remote-tunnel-service" "remote-tunnel-service-restart-failed"
+    return 0
+}
+
+function finalize_auto_update_migration_state() {
+    local backend_was_stale="$1"
+    local tunnel_was_stale="$2"
+    local migration_detected=0
+    local partial=0
+    local failed=0
+
+    reset_auto_update_migration_state
+
+    if [[ "$backend_was_stale" == "1" ]]; then
+        migration_detected=1
+        if backend_container_has_legacy_domain_quiet; then
+            LAST_MIGRATION_BACKEND_ENV_RESULT="stale-remains"
+            append_migration_follow_up "recreate-backend-container" "backend-env-stale"
+            partial=1
+        else
+            LAST_MIGRATION_CHANGED="true"
+            LAST_MIGRATION_BACKEND_ENV_RESULT="migrated"
+        fi
+    fi
+
+    if [[ "$tunnel_was_stale" == "1" ]]; then
+        migration_detected=1
+        if ! migrate_remote_tunnel_env_domains; then
+            if [[ "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT" == "rewrite-failed" ]]; then
+                failed=1
+            elif [[ "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT" != "already-aligned" ]]; then
+                partial=1
+            fi
+        fi
+        if [[ "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT" == restart-failed || "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT" == skipped-incomplete-config || "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT" == skipped-service-missing || "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT" == skipped-no-systemctl ]]; then
+            partial=1
+        fi
+    fi
+
+    if [[ $migration_detected -eq 0 ]]; then
+        LAST_MIGRATION_RESULT="not-needed"
+        LAST_MIGRATION_SUMMARY="No stale migration config was detected."
+        return 0
+    fi
+
+    if [[ $failed -eq 1 ]]; then
+        LAST_MIGRATION_RESULT="failed"
+        LAST_MIGRATION_SUMMARY="Auto-update detected stale migration config but could not rewrite all required host values."
+        return 0
+    fi
+
+    if [[ $partial -eq 1 ]]; then
+        LAST_MIGRATION_RESULT="partial"
+        LAST_MIGRATION_SUMMARY="Auto-update migrated stale config values, but follow-up is still required to complete station migration."
+        return 0
+    fi
+
+    LAST_MIGRATION_RESULT="completed"
+    LAST_MIGRATION_SUMMARY="Auto-update migrated stale config values to the new server domain."
+    return 0
 }
 
 function cleanup_dangling_images_compatible() {
@@ -2694,7 +2881,7 @@ function write_update_state_files() {
 
     tmp_file="$(mktemp "/tmp/upri-sender-state.XXXXXX.json")" || return 1
     cat <<EOF > "$tmp_file"
-{"timestamp":"$(json_escape "$now_iso")","bundleTag":"$(json_escape "$bundle_tag")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","backendResult":"$(json_escape "$backend_result")","frontendResult":"$(json_escape "$frontend_result")","scriptSyncResult":"$(json_escape "$script_sync_result")","alertPostResult":"$(json_escape "$alert_post_result")","rollback":{"result":"$(json_escape "$LAST_ROLLBACK_RESULT")","backendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"frontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"backendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","frontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")"},"backend":{"exitCode":$backend_exit,"pullState":"$(json_escape "$backend_pull_state")","imageRef":"$(json_escape "$backend_ref")","bundleVersion":"$(json_escape "$backend_bundle_version")"},"frontend":{"exitCode":$frontend_exit,"pullState":"$(json_escape "$frontend_pull_state")","imageRef":"$(json_escape "$frontend_ref")","bundleVersion":"$(json_escape "$frontend_bundle_version")"}}
+{"timestamp":"$(json_escape "$now_iso")","bundleTag":"$(json_escape "$bundle_tag")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","backendResult":"$(json_escape "$backend_result")","frontendResult":"$(json_escape "$frontend_result")","scriptSyncResult":"$(json_escape "$script_sync_result")","alertPostResult":"$(json_escape "$alert_post_result")","rollback":{"result":"$(json_escape "$LAST_ROLLBACK_RESULT")","backendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"frontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"backendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","frontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")"},"migration":{"result":"$(json_escape "$LAST_MIGRATION_RESULT")","summary":"$(json_escape "$LAST_MIGRATION_SUMMARY")","changed":"$(json_escape "$LAST_MIGRATION_CHANGED")","backendEnv":"$(json_escape "$LAST_MIGRATION_BACKEND_ENV_RESULT")","remoteTunnelEnv":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT")","remoteTunnelService":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT")","nextStep":"$(json_escape "$LAST_MIGRATION_NEXT_STEP")","remaining":"$(json_escape "$LAST_MIGRATION_REMAINING")"},"backend":{"exitCode":$backend_exit,"pullState":"$(json_escape "$backend_pull_state")","imageRef":"$(json_escape "$backend_ref")","bundleVersion":"$(json_escape "$backend_bundle_version")"},"frontend":{"exitCode":$frontend_exit,"pullState":"$(json_escape "$frontend_pull_state")","imageRef":"$(json_escape "$frontend_ref")","bundleVersion":"$(json_escape "$frontend_bundle_version")"}}
 EOF
 
     if install_data_payload "$tmp_file" "$state_path" 0644; then
@@ -2815,7 +3002,7 @@ function post_auto_update_alert() {
 
     local payload
     payload=$(cat <<EOF
-{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"device.alert","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"AUTO_UPDATE","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-auto-update","notificationScope":"admin-only","backendExitCode":$backend_exit,"frontendExitCode":$frontend_exit,"backendPullState":"$(json_escape "$backend_pull_state")","frontendPullState":"$(json_escape "$frontend_pull_state")","backendScriptUpdate":"$(json_escape "$backend_script_update")","frontendScriptUpdate":"$(json_escape "$frontend_script_update")","bundleTag":"$(json_escape "$bundle_tag")","bundleVersion":"$(json_escape "$backend_bundle_version")","frontendBundleVersion":"$(json_escape "$frontend_bundle_version")","backendImageRef":"$(json_escape "$backend_image_ref")","frontendImageRef":"$(json_escape "$frontend_image_ref")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","scriptSyncResult":"$(json_escape "$script_sync_result")","rollbackResult":"$(json_escape "$LAST_ROLLBACK_RESULT")","rollbackBackendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"rollbackFrontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"rollbackBackendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","rollbackFrontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")"},"dedupeKey":"$(json_escape "$dedupe_key")"}
+{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"device.alert","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"AUTO_UPDATE","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-auto-update","notificationScope":"admin-only","backendExitCode":$backend_exit,"frontendExitCode":$frontend_exit,"backendPullState":"$(json_escape "$backend_pull_state")","frontendPullState":"$(json_escape "$frontend_pull_state")","backendScriptUpdate":"$(json_escape "$backend_script_update")","frontendScriptUpdate":"$(json_escape "$frontend_script_update")","bundleTag":"$(json_escape "$bundle_tag")","bundleVersion":"$(json_escape "$backend_bundle_version")","frontendBundleVersion":"$(json_escape "$frontend_bundle_version")","backendImageRef":"$(json_escape "$backend_image_ref")","frontendImageRef":"$(json_escape "$frontend_image_ref")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","scriptSyncResult":"$(json_escape "$script_sync_result")","rollbackResult":"$(json_escape "$LAST_ROLLBACK_RESULT")","rollbackBackendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"rollbackFrontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"rollbackBackendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","rollbackFrontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")","migrationResult":"$(json_escape "$LAST_MIGRATION_RESULT")","migrationChanged":"$(json_escape "$LAST_MIGRATION_CHANGED")","migrationSummary":"$(json_escape "$LAST_MIGRATION_SUMMARY")","migrationBackendEnv":"$(json_escape "$LAST_MIGRATION_BACKEND_ENV_RESULT")","migrationRemoteTunnelEnv":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT")","migrationRemoteTunnelService":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT")","migrationNextStep":"$(json_escape "$LAST_MIGRATION_NEXT_STEP")","migrationRemaining":"$(json_escape "$LAST_MIGRATION_REMAINING")"},"dedupeKey":"$(json_escape "$dedupe_key")"}
 EOF
 )
 
@@ -3012,16 +3199,25 @@ function update_stack_with_alert() {
     local target_backend_digest target_frontend_digest
     local target_backend_version target_frontend_version
     local alert_code severity summary
+    local backend_was_stale=0
+    local tunnel_was_stale=0
 
     LAST_ROLLBACK_RESULT="not-needed"
     LAST_ROLLBACK_BACKEND_EXIT=0
     LAST_ROLLBACK_FRONTEND_EXIT=0
     LAST_ROLLBACK_BACKEND_TARGET="none"
     LAST_ROLLBACK_FRONTEND_TARGET="none"
+    reset_auto_update_migration_state
 
     rm -f "$LEGACY_AUTO_UPDATE_STATE_FILE" >/dev/null 2>&1 || true
     refresh_sender_scripts
     ensure_host_scripts_dir || true
+    if backend_container_has_legacy_domain_quiet; then
+        backend_was_stale=1
+    fi
+    if remote_tunnel_env_has_legacy_domain; then
+        tunnel_was_stale=1
+    fi
 
     if ! resolve_bundle_targets; then
         target_backend_ref="$LAST_BACKEND_IMAGE_REF"
@@ -3146,6 +3342,8 @@ function update_stack_with_alert() {
             "${SENDER_FRONTEND_IMAGE_REPO}@${target_frontend_digest}" || true
     fi
 
+    finalize_auto_update_migration_state "$backend_was_stale" "$tunnel_was_stale"
+
     if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
         alert_code="AUTO_UPDATE_FAILED"
         severity="critical"
@@ -3153,11 +3351,19 @@ function update_stack_with_alert() {
     elif [[ "$backend_pull_state" == "no-change" && "$frontend_pull_state" == "no-change" ]]; then
         alert_code="AUTO_UPDATE_NO_CHANGE"
         severity="info"
-        summary="Sender auto-update executed; no newer images were available."
+        if [[ "$LAST_MIGRATION_RESULT" == "completed" || "$LAST_MIGRATION_RESULT" == "partial" || "$LAST_MIGRATION_RESULT" == "failed" ]]; then
+            summary="$LAST_MIGRATION_SUMMARY"
+        else
+            summary="Sender auto-update executed; no newer images were available."
+        fi
     else
         alert_code="AUTO_UPDATE_EXECUTED"
         severity="info"
-        summary="Sender auto-update executed successfully."
+        if [[ "$LAST_MIGRATION_RESULT" == "completed" || "$LAST_MIGRATION_RESULT" == "partial" || "$LAST_MIGRATION_RESULT" == "failed" ]]; then
+            summary="$LAST_MIGRATION_SUMMARY"
+        else
+            summary="Sender auto-update executed successfully."
+        fi
     fi
 
     post_auto_update_alert \
