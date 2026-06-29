@@ -102,9 +102,16 @@ The helper will:
 
 ## 7. Common failure recovery
 
+- UI shows `tunnel-admin@host.docker.internal: Permission denied (publickey)`:
+  - fix server-side bastion SSH setup in `earthquake-hub-commons` first (`sudo ./bastion/setup-host.sh`, backend key mounted into `ehub-backend`, and backend container restarted).
+  - this is a backend-to-bastion SSH authentication failure, not a WSTunnel path-prefix failure.
 - Private key permission error:
   - ensure key is `600`/`400` and owned by service user.
 - Enrollment API failure:
   - check `REMOTE_TUNNEL_ENROLL_TOKEN` and endpoint reachability.
+- Enrollment succeeds but sender cannot establish WSTunnel:
+  - confirm `TUNNEL_WSS_URL`, `TUNNEL_WSS_PATH_PREFIX`, nginx `/api/ws-tunnel/<secret>/`, and `wstunnel-restrictions.yaml` all use the same path prefix.
+- Sender SSH warns about bastion host authenticity:
+  - set backend `TUNNEL_BASTION_HOST_KEY` to a `known_hosts` line for the public bastion host so enrollment can return `REMOTE_TUNNEL_BASTION_HOST_KEY`.
 - Service running but no remote listener:
   - verify outbound HTTPS reachability and `wstunnel` logs (`journalctl -u sender-remote-tunnel.service -n 100 --no-pager`).
