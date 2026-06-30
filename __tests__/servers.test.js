@@ -73,14 +73,14 @@ describe('Servers routes', () => {
     expect(updated).toEqual(existing);
   });
 
-  it('POST /servers/remove allows deleting UP-Diliman non-default server via API (200)', async () => {
+  it('POST /servers/remove allows deleting non-default server via API (200)', async () => {
     const existing = [
-      { institutionName: 'UP-Diliman', url: 'earthquake.science.upd.edu.ph:16000' },
+      { institutionName: 'Test Ringserver', url: 'example.invalid:16000' },
     ];
     await fs.writeFile(path.join(tempLocalDbs, 'servers.json'), JSON.stringify(existing));
 
     const response = await request(app).post('/servers/remove').send({
-      url: 'earthquake.science.upd.edu.ph:16000',
+      url: 'example.invalid:16000',
     });
 
     expect(response.statusCode).toBe(200);
