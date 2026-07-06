@@ -26,13 +26,46 @@ LAST_PULL_RESULT="unknown"
 LAST_FRONTEND_IMAGE_REF="$IMAGE"
 LAST_FRONTEND_DIGEST="unknown"
 LAST_FRONTEND_BUNDLE_VERSION="unknown"
+LAST_RSHAKE_ALERT_HTTP_STATUS=""
+LAST_RSHAKE_ALERT_POST_ERROR=""
+
+function read_env_file_value() {
+    local env_file="$1"
+    local key="$2"
+
+    if [[ -r "$env_file" ]]; then
+        awk -F= -v key="$key" '$1 == key {sub("^[^=]*=", ""); print; exit}' "$env_file"
+        return 0
+    fi
+
+    if command -v sudo >/dev/null 2>&1 && sudo -n test -r "$env_file" >/dev/null 2>&1; then
+        sudo -n awk -F= -v key="$key" '$1 == key {sub("^[^=]*=", ""); print; exit}' "$env_file"
+        return 0
+    fi
+
+    return 1
+}
 
 function load_alert_runtime_env() {
+    local shared_secret
+    local issued_at
+
     if [[ -r "$ALERT_RUNTIME_ENV_FILE" ]]; then
         set -a
         # shellcheck disable=SC1090
         . "$ALERT_RUNTIME_ENV_FILE"
         set +a
+        return 0
+    fi
+
+    shared_secret="$(read_env_file_value "$ALERT_RUNTIME_ENV_FILE" "RSHAKE_ALERT_SHARED_SECRET" 2>/dev/null || true)"
+    issued_at="$(read_env_file_value "$ALERT_RUNTIME_ENV_FILE" "RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT" 2>/dev/null || true)"
+
+    if [[ -n "$shared_secret" ]]; then
+        export RSHAKE_ALERT_SHARED_SECRET="$shared_secret"
+    fi
+    if [[ -n "$issued_at" ]]; then
+        export RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT="$issued_at"
     fi
 }
 
@@ -64,6 +97,98 @@ function read_device_value() {
         return 0
     fi
     printf ""
+    return 1
+}
+
+function post_rshake_alert_payload() {
+    local endpoint="$1"
+    local timeout_sec="$2"
+    local payload="$3"
+    local alert_label="$4"
+    local attempts="${RSHAKE_ALERT_RETRY_ATTEMPTS:-2}"
+    local retry_sleep="${RSHAKE_ALERT_RETRY_SLEEP_SEC:-1}"
+    local attempt=1
+    local http_code=""
+    local curl_exit=0
+    local response_file
+    local error_file
+    local response_body=""
+    local error_body=""
+
+    LAST_RSHAKE_ALERT_HTTP_STATUS=""
+    LAST_RSHAKE_ALERT_POST_ERROR=""
+
+    if ! command -v curl >/dev/null 2>&1; then
+        LAST_RSHAKE_ALERT_POST_ERROR="curl unavailable"
+        return 127
+    fi
+
+    if ! [[ "$attempts" =~ ^[0-9]+$ ]] || (( attempts < 1 )); then
+        attempts=1
+    fi
+    if ! [[ "$retry_sleep" =~ ^[0-9]+$ ]]; then
+        retry_sleep=1
+    fi
+
+    load_alert_runtime_env
+
+    response_file="$(mktemp "/tmp/upri-rshake-alert-response.XXXXXX")" || return 1
+    error_file="$(mktemp "/tmp/upri-rshake-alert-error.XXXXXX")" || {
+        rm -f "$response_file" >/dev/null 2>&1
+        return 1
+    }
+
+    while (( attempt <= attempts )); do
+        local -a secret_header_args=()
+        if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
+            secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
+        fi
+
+        : > "$response_file"
+        : > "$error_file"
+        curl_exit=0
+        http_code="$(curl --silent --show-error --max-time "$timeout_sec" \
+            -H "Content-Type: application/json" \
+            "${secret_header_args[@]}" \
+            -X POST "$endpoint" \
+            -d "$payload" \
+            -o "$response_file" \
+            -w "%{http_code}" 2>"$error_file")" || curl_exit=$?
+
+        LAST_RSHAKE_ALERT_HTTP_STATUS="$http_code"
+        if [[ $curl_exit -eq 0 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            rm -f "$response_file" "$error_file" >/dev/null 2>&1
+            return 0
+        fi
+
+        response_body="$(head -c 300 "$response_file" 2>/dev/null | tr '\r\n' '  ' | xargs 2>/dev/null || true)"
+        error_body="$(head -c 300 "$error_file" 2>/dev/null | tr '\r\n' '  ' | xargs 2>/dev/null || true)"
+        if [[ $curl_exit -ne 0 ]]; then
+            LAST_RSHAKE_ALERT_POST_ERROR="curl exit $curl_exit"
+            if [[ -n "$error_body" ]]; then
+                LAST_RSHAKE_ALERT_POST_ERROR="${LAST_RSHAKE_ALERT_POST_ERROR}: $error_body"
+            fi
+        else
+            LAST_RSHAKE_ALERT_POST_ERROR="HTTP ${http_code:-unknown}"
+            if [[ -n "$response_body" ]]; then
+                LAST_RSHAKE_ALERT_POST_ERROR="${LAST_RSHAKE_ALERT_POST_ERROR}: $response_body"
+            fi
+        fi
+
+        if (( attempt >= attempts )); then
+            break
+        fi
+        if [[ $curl_exit -eq 0 && ! "$http_code" =~ ^(429|5[0-9][0-9])$ ]]; then
+            break
+        fi
+
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "RShake alert post for $alert_label failed on attempt $attempt/$attempts (${LAST_RSHAKE_ALERT_POST_ERROR}); retrying."
+        sleep "$retry_sleep"
+        attempt=$((attempt + 1))
+    done
+
+    rm -f "$response_file" "$error_file" >/dev/null 2>&1
     return 1
 }
 
@@ -270,12 +395,6 @@ function post_auto_update_alert() {
     local bundle_version="${15}"
     local script_sync_result="${16}"
 
-    if ! command -v curl >/dev/null 2>&1; then
-        echo -en "[\e[1;33mWARN\e[0m] "
-        echo "curl is unavailable; skipping auto-update alert post."
-        return 0
-    fi
-
     local network station mac stream_id message_id occurred_at endpoint timeout_sec dedupe_key schema_version
     local device_json first_field
     network="$(read_device_value /opt/settings/sys/NET.txt)"
@@ -342,23 +461,14 @@ function post_auto_update_alert() {
 EOF
 )
 
-    local -a secret_header_args=()
-    if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
-        secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
-    fi
-
-    if curl --silent --show-error --max-time "$timeout_sec" \
-        -H "Content-Type: application/json" \
-        "${secret_header_args[@]}" \
-        -X POST "$endpoint" \
-        -d "$payload" >/dev/null; then
+    if post_rshake_alert_payload "$endpoint" "$timeout_sec" "$payload" "frontend-auto-update:$alert_code"; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Auto-update alert posted to central endpoint."
         return 0
     fi
 
     echo -en "[\e[1;33mWARN\e[0m] "
-    echo "Failed to post auto-update alert to central endpoint."
+    echo "Failed to post auto-update alert to central endpoint (${LAST_RSHAKE_ALERT_POST_ERROR:-unknown error}; http=${LAST_RSHAKE_ALERT_HTTP_STATUS:-none})."
     return 0
 }
 

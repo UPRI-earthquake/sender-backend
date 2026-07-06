@@ -57,6 +57,8 @@ CURRENT_SENDER_DOMAIN="earthquake.up.edu.ph"
 W1_PROD_IP_DEFAULT="earthquake.up.edu.ph/api"
 AUTO_UPDATE_ALERT_ENDPOINT_DEFAULT="https://earthquake.up.edu.ph/api/messaging/restricted/rshake-alert"
 AUTO_UPDATE_ALERT_TIMEOUT_SEC_DEFAULT=8
+AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENABLED_DEFAULT="true"
+AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENDPOINT_DEFAULT="https://${CURRENT_SENDER_DOMAIN}/api/device/tunnel/enroll"
 DISK_ALERT_WARN_FREE_PCT_DEFAULT=15
 DISK_ALERT_CRITICAL_FREE_PCT_DEFAULT=8
 DISK_ALERT_RECOVERY_FREE_PCT_DEFAULT=20
@@ -113,6 +115,8 @@ REMOTE_TUNNEL_STATE_FILE="${REMOTE_TUNNEL_STATE_FILE:-$REMOTE_TUNNEL_STATE_FILE_
 REMOTE_TUNNEL_PID_FILE="${REMOTE_TUNNEL_PID_FILE:-$REMOTE_TUNNEL_PID_FILE_DEFAULT}"
 AUTO_UPDATE_ROLLBACK_ENABLED="${AUTO_UPDATE_ROLLBACK_ENABLED:-$AUTO_UPDATE_ROLLBACK_ENABLED_DEFAULT}"
 AUTO_UPDATE_PRUNE_DANGLING_IMAGES="${AUTO_UPDATE_PRUNE_DANGLING_IMAGES:-$AUTO_UPDATE_PRUNE_DANGLING_IMAGES_DEFAULT}"
+AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENABLED="${AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENABLED:-$AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENABLED_DEFAULT}"
+AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENDPOINT="${AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENDPOINT:-$AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENDPOINT_DEFAULT}"
 
 SENDER_SCRIPT_AUTO_UPDATE_ENABLED_DEFAULT="deprecated"
 SENDER_BACKEND_SCRIPT_URL_DEFAULT="deprecated"
@@ -146,13 +150,57 @@ LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT="not-run"
 LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT="not-run"
 LAST_MIGRATION_NEXT_STEP="none"
 LAST_MIGRATION_REMAINING="none"
+LAST_TUNNEL_ENROLLMENT_RESULT="not-run"
+LAST_TUNNEL_ENROLLMENT_SUMMARY="not-run"
+LAST_TUNNEL_ENROLLMENT_CHANGED="false"
+LAST_TUNNEL_ENROLLMENT_EXIT=0
+LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="not-run"
+LAST_TUNNEL_ENROLLMENT_DEVICE_ID=""
+LAST_TUNNEL_ENROLLMENT_REMOTE_PORT=""
+LAST_TUNNEL_ENROLLMENT_NEXT_STEP="none"
+LAST_TUNNEL_ENROLLMENT_REMAINING="none"
+LAST_ALERT_POST_HTTP_STATUS=""
+LAST_ALERT_POST_ERROR=""
+LAST_RSHAKE_ALERT_HTTP_STATUS=""
+LAST_RSHAKE_ALERT_POST_ERROR=""
+
+function read_env_file_value() {
+    local env_file="$1"
+    local key="$2"
+
+    if [[ -r "$env_file" ]]; then
+        awk -F= -v key="$key" '$1 == key {sub("^[^=]*=", ""); print; exit}' "$env_file"
+        return 0
+    fi
+
+    if command -v sudo >/dev/null 2>&1 && sudo -n test -r "$env_file" >/dev/null 2>&1; then
+        sudo -n awk -F= -v key="$key" '$1 == key {sub("^[^=]*=", ""); print; exit}' "$env_file"
+        return 0
+    fi
+
+    return 1
+}
 
 function load_alert_runtime_env() {
+    local shared_secret
+    local issued_at
+
     if [[ -r "$ALERT_RUNTIME_ENV_FILE" ]]; then
         set -a
         # shellcheck disable=SC1090
         . "$ALERT_RUNTIME_ENV_FILE"
         set +a
+        return 0
+    fi
+
+    shared_secret="$(read_env_file_value "$ALERT_RUNTIME_ENV_FILE" "RSHAKE_ALERT_SHARED_SECRET" 2>/dev/null || true)"
+    issued_at="$(read_env_file_value "$ALERT_RUNTIME_ENV_FILE" "RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT" 2>/dev/null || true)"
+
+    if [[ -n "$shared_secret" ]]; then
+        export RSHAKE_ALERT_SHARED_SECRET="$shared_secret"
+    fi
+    if [[ -n "$issued_at" ]]; then
+        export RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT="$issued_at"
     fi
 }
 
@@ -219,6 +267,98 @@ function read_device_value() {
         return 0
     fi
     printf ""
+    return 1
+}
+
+function post_rshake_alert_payload() {
+    local endpoint="$1"
+    local timeout_sec="$2"
+    local payload="$3"
+    local alert_label="$4"
+    local attempts="${RSHAKE_ALERT_RETRY_ATTEMPTS:-2}"
+    local retry_sleep="${RSHAKE_ALERT_RETRY_SLEEP_SEC:-1}"
+    local attempt=1
+    local http_code=""
+    local curl_exit=0
+    local response_file
+    local error_file
+    local response_body=""
+    local error_body=""
+
+    LAST_RSHAKE_ALERT_HTTP_STATUS=""
+    LAST_RSHAKE_ALERT_POST_ERROR=""
+
+    if ! command -v curl >/dev/null 2>&1; then
+        LAST_RSHAKE_ALERT_POST_ERROR="curl unavailable"
+        return 127
+    fi
+
+    if ! [[ "$attempts" =~ ^[0-9]+$ ]] || (( attempts < 1 )); then
+        attempts=1
+    fi
+    if ! [[ "$retry_sleep" =~ ^[0-9]+$ ]]; then
+        retry_sleep=1
+    fi
+
+    load_alert_runtime_env
+
+    response_file="$(mktemp "/tmp/upri-rshake-alert-response.XXXXXX")" || return 1
+    error_file="$(mktemp "/tmp/upri-rshake-alert-error.XXXXXX")" || {
+        rm -f "$response_file" >/dev/null 2>&1
+        return 1
+    }
+
+    while (( attempt <= attempts )); do
+        local -a secret_header_args=()
+        if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
+            secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
+        fi
+
+        : > "$response_file"
+        : > "$error_file"
+        curl_exit=0
+        http_code="$(curl --silent --show-error --max-time "$timeout_sec" \
+            -H "Content-Type: application/json" \
+            "${secret_header_args[@]}" \
+            -X POST "$endpoint" \
+            -d "$payload" \
+            -o "$response_file" \
+            -w "%{http_code}" 2>"$error_file")" || curl_exit=$?
+
+        LAST_RSHAKE_ALERT_HTTP_STATUS="$http_code"
+        if [[ $curl_exit -eq 0 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            rm -f "$response_file" "$error_file" >/dev/null 2>&1
+            return 0
+        fi
+
+        response_body="$(head -c 300 "$response_file" 2>/dev/null | tr '\r\n' '  ' | xargs 2>/dev/null || true)"
+        error_body="$(head -c 300 "$error_file" 2>/dev/null | tr '\r\n' '  ' | xargs 2>/dev/null || true)"
+        if [[ $curl_exit -ne 0 ]]; then
+            LAST_RSHAKE_ALERT_POST_ERROR="curl exit $curl_exit"
+            if [[ -n "$error_body" ]]; then
+                LAST_RSHAKE_ALERT_POST_ERROR="${LAST_RSHAKE_ALERT_POST_ERROR}: $error_body"
+            fi
+        else
+            LAST_RSHAKE_ALERT_POST_ERROR="HTTP ${http_code:-unknown}"
+            if [[ -n "$response_body" ]]; then
+                LAST_RSHAKE_ALERT_POST_ERROR="${LAST_RSHAKE_ALERT_POST_ERROR}: $response_body"
+            fi
+        fi
+
+        if (( attempt >= attempts )); then
+            break
+        fi
+        if [[ $curl_exit -eq 0 && ! "$http_code" =~ ^(429|5[0-9][0-9])$ ]]; then
+            break
+        fi
+
+        echo -en "[\e[1;33mWARN\e[0m] "
+        echo "RShake alert post for $alert_label failed on attempt $attempt/$attempts (${LAST_RSHAKE_ALERT_POST_ERROR}); retrying."
+        sleep "$retry_sleep"
+        attempt=$((attempt + 1))
+    done
+
+    rm -f "$response_file" "$error_file" >/dev/null 2>&1
     return 1
 }
 
@@ -544,6 +684,194 @@ function finalize_auto_update_migration_state() {
 
     LAST_MIGRATION_RESULT="completed"
     LAST_MIGRATION_SUMMARY="Auto-update migrated stale config values to the new server domain."
+    return 0
+}
+
+function reset_auto_update_tunnel_enrollment_state() {
+    LAST_TUNNEL_ENROLLMENT_RESULT="not-needed"
+    LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment was not needed."
+    LAST_TUNNEL_ENROLLMENT_CHANGED="false"
+    LAST_TUNNEL_ENROLLMENT_EXIT=0
+    LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="not-run"
+    LAST_TUNNEL_ENROLLMENT_DEVICE_ID=""
+    LAST_TUNNEL_ENROLLMENT_REMOTE_PORT=""
+    LAST_TUNNEL_ENROLLMENT_NEXT_STEP="none"
+    LAST_TUNNEL_ENROLLMENT_REMAINING="none"
+}
+
+function resolve_remote_tunnel_setup_command() {
+    local setup_cmd
+
+    setup_cmd="$(command -v sender-setup-remote-tunnel 2>/dev/null || true)"
+    if [[ -n "$setup_cmd" && -x "$setup_cmd" ]]; then
+        printf "%s" "$setup_cmd"
+        return 0
+    fi
+
+    setup_cmd="${SENDER_HOST_SCRIPTS_DIR}/setup-remote-tunnel"
+    if [[ -x "$setup_cmd" ]]; then
+        printf "%s" "$setup_cmd"
+        return 0
+    fi
+
+    return 1
+}
+
+function update_tunnel_enrollment_state_from_env() {
+    load_remote_tunnel_env
+    LAST_TUNNEL_ENROLLMENT_DEVICE_ID="${REMOTE_TUNNEL_DEVICE_ID_VALUE:-}"
+    LAST_TUNNEL_ENROLLMENT_REMOTE_PORT="${REMOTE_TUNNEL_REMOTE_PORT_VALUE:-}"
+}
+
+function set_tunnel_enrollment_follow_up() {
+    LAST_TUNNEL_ENROLLMENT_NEXT_STEP="$1"
+    LAST_TUNNEL_ENROLLMENT_REMAINING="$2"
+}
+
+function attempt_auto_update_tunnel_enrollment() {
+    local setup_cmd
+    local sender_backend_cmd
+    local setup_output
+    local setup_exit=0
+    local active_state="unknown"
+    local connected_state="unknown"
+    local -a setup_args=()
+
+    reset_auto_update_tunnel_enrollment_state
+
+    if ! is_truthy "$AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENABLED"; then
+        LAST_TUNNEL_ENROLLMENT_RESULT="disabled"
+        LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment from auto-update is disabled."
+        return 0
+    fi
+
+    load_remote_tunnel_env
+    if is_truthy "${REMOTE_TUNNEL_ENABLED_VALUE:-false}" && remote_tunnel_config_is_complete; then
+        update_tunnel_enrollment_state_from_env
+        if command -v systemctl >/dev/null 2>&1; then
+            active_state="$(systemctl is-active "$REMOTE_TUNNEL_SERVICE" 2>/dev/null || true)"
+            if [[ "$active_state" == "active" ]]; then
+                connected_state="$(remote_tunnel_watchdog_connected_state)"
+                if [[ "$connected_state" == "false" ]]; then
+                    LAST_TUNNEL_ENROLLMENT_RESULT="partial"
+                    LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel is already enrolled and active, but it is not connected."
+                    LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="active-disconnected"
+                    set_tunnel_enrollment_follow_up "check-remote-tunnel-service" "remote-tunnel-not-connected"
+                    return 0
+                fi
+
+                LAST_TUNNEL_ENROLLMENT_RESULT="already-configured"
+                LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel is already enrolled, enabled, and active."
+                LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="active-${connected_state:-unknown}"
+                return 0
+            fi
+        else
+            LAST_TUNNEL_ENROLLMENT_RESULT="already-configured"
+            LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel is already enrolled and enabled; service state could not be checked without systemctl."
+            LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="unknown-no-systemctl"
+            return 0
+        fi
+    fi
+
+    setup_cmd="$(resolve_remote_tunnel_setup_command || true)"
+    if [[ -z "$setup_cmd" ]]; then
+        LAST_TUNNEL_ENROLLMENT_RESULT="skipped-missing-helper"
+        LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment skipped because sender-setup-remote-tunnel is unavailable."
+        LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="not-run"
+        set_tunnel_enrollment_follow_up "sync-host-scripts" "remote-tunnel-setup-helper-missing"
+        return 0
+    fi
+
+    sender_backend_cmd="$(command -v sender-backend 2>/dev/null || true)"
+    if [[ -z "$sender_backend_cmd" ]]; then
+        sender_backend_cmd="/usr/local/bin/sender-backend"
+    fi
+
+    setup_args=(
+        "$setup_cmd"
+        "--enroll-endpoint" "$AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENDPOINT"
+        "--env-file" "$REMOTE_TUNNEL_ENV_FILE"
+        "--sender-backend-cmd" "$sender_backend_cmd"
+    )
+
+    echo -en "[  \e[32mOK\e[0m  ] "
+    echo "Attempting remote tunnel enrollment from auto-update."
+
+    if [[ "$(id -u)" -eq 0 ]]; then
+        setup_output="$("${setup_args[@]}" 2>&1)" || setup_exit=$?
+    elif command -v sudo >/dev/null 2>&1; then
+        setup_output="$(sudo -n "${setup_args[@]}" 2>&1)" || setup_exit=$?
+    else
+        LAST_TUNNEL_ENROLLMENT_RESULT="skipped-no-root"
+        LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment skipped because auto-update lacks root access."
+        LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="not-run"
+        set_tunnel_enrollment_follow_up "run-sender-setup-remote-tunnel" "root-access-required"
+        return 0
+    fi
+    LAST_TUNNEL_ENROLLMENT_EXIT=$setup_exit
+
+    if [[ -n "$setup_output" ]]; then
+        echo "$setup_output"
+    fi
+
+    update_tunnel_enrollment_state_from_env
+
+    if [[ $setup_exit -ne 0 ]]; then
+        if [[ "$setup_output" == *"no enrollment token was found"* ]]; then
+            LAST_TUNNEL_ENROLLMENT_RESULT="skipped-no-token"
+            LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment skipped because no sender token was available."
+            set_tunnel_enrollment_follow_up "link-or-refresh-sender-token" "enrollment-token-missing"
+        elif [[ "$setup_output" == *"Run as root"* || "$setup_output" == *"sudo:"* ]]; then
+            LAST_TUNNEL_ENROLLMENT_RESULT="skipped-no-root"
+            LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment skipped because auto-update lacks root access."
+            set_tunnel_enrollment_follow_up "run-sender-setup-remote-tunnel" "root-access-required"
+        else
+            LAST_TUNNEL_ENROLLMENT_RESULT="failed"
+            LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment failed during auto-update."
+            set_tunnel_enrollment_follow_up "check-remote-tunnel-enrollment" "remote-tunnel-enrollment-failed"
+        fi
+        LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="not-run"
+        return 0
+    fi
+
+    if ! is_truthy "${REMOTE_TUNNEL_ENABLED_VALUE:-false}" || ! remote_tunnel_config_is_complete; then
+        LAST_TUNNEL_ENROLLMENT_RESULT="partial"
+        LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment ran, but the tunnel config is still incomplete."
+        LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="config-incomplete"
+        set_tunnel_enrollment_follow_up "complete-remote-tunnel-config" "remote-tunnel-config-incomplete"
+        return 0
+    fi
+
+    LAST_TUNNEL_ENROLLMENT_CHANGED="true"
+    if command -v systemctl >/dev/null 2>&1; then
+        active_state="$(systemctl is-active "$REMOTE_TUNNEL_SERVICE" 2>/dev/null || true)"
+        if [[ "$active_state" == "active" ]]; then
+            sleep 3
+            connected_state="$(remote_tunnel_watchdog_connected_state)"
+            if [[ "$connected_state" == "false" ]]; then
+                LAST_TUNNEL_ENROLLMENT_RESULT="partial"
+                LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment completed, but the tunnel has not connected."
+                LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="active-disconnected"
+                set_tunnel_enrollment_follow_up "check-remote-tunnel-service" "remote-tunnel-not-connected"
+                return 0
+            fi
+
+            LAST_TUNNEL_ENROLLMENT_RESULT="completed"
+            LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment completed and the tunnel service is active."
+            LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="active-${connected_state:-unknown}"
+            return 0
+        fi
+
+        LAST_TUNNEL_ENROLLMENT_RESULT="partial"
+        LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment completed, but the tunnel service is not active."
+        LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="inactive-${active_state:-unknown}"
+        set_tunnel_enrollment_follow_up "check-remote-tunnel-service" "remote-tunnel-service-not-active"
+        return 0
+    fi
+
+    LAST_TUNNEL_ENROLLMENT_RESULT="completed"
+    LAST_TUNNEL_ENROLLMENT_SUMMARY="Remote tunnel enrollment completed; service state could not be checked without systemctl."
+    LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT="unknown-no-systemctl"
     return 0
 }
 
@@ -1928,12 +2256,6 @@ function post_disk_space_alert() {
     local message_type="${15}"
     local status_value="${16}"
 
-    if ! command -v curl >/dev/null 2>&1; then
-        echo -en "[\e[1;33mWARN\e[0m] "
-        echo "curl is unavailable; skipping disk-space alert post."
-        return 0
-    fi
-
     local network station mac stream_id message_id occurred_at endpoint timeout_sec dedupe_key schema_version mount_token
     local device_json first_field payload
     network="$(read_device_value /opt/settings/sys/NET.txt)"
@@ -2003,23 +2325,14 @@ function post_disk_space_alert() {
 EOF
 )
 
-    local -a secret_header_args=()
-    if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
-        secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
-    fi
-
-    if curl --silent --show-error --max-time "$timeout_sec" \
-        -H "Content-Type: application/json" \
-        "${secret_header_args[@]}" \
-        -X POST "$endpoint" \
-        -d "$payload" >/dev/null; then
+    if post_rshake_alert_payload "$endpoint" "$timeout_sec" "$payload" "disk-space:$alert_code"; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Disk-space alert ($alert_code) posted to central endpoint."
         return 0
     fi
 
     echo -en "[\e[1;33mWARN\e[0m] "
-    echo "Failed to post disk-space alert ($alert_code) to central endpoint."
+    echo "Failed to post disk-space alert ($alert_code) to central endpoint (${LAST_RSHAKE_ALERT_POST_ERROR:-unknown error}; http=${LAST_RSHAKE_ALERT_HTTP_STATUS:-none})."
     return 0
 }
 
@@ -2281,12 +2594,6 @@ function post_watchdog_alert() {
     local threshold_sec="${10}"
     local cooldown_sec="${11}"
 
-    if ! command -v curl >/dev/null 2>&1; then
-        echo -en "[\e[1;33mWARN\e[0m] "
-        echo "curl is unavailable; skipping watchdog alert post."
-        return 0
-    fi
-
     local network station mac stream_id message_id occurred_at endpoint timeout_sec dedupe_key schema_version
     local device_json first_field payload
     network="$(read_device_value /opt/settings/sys/NET.txt)"
@@ -2352,23 +2659,14 @@ function post_watchdog_alert() {
 EOF
 )
 
-    local -a secret_header_args=()
-    if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
-        secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
-    fi
-
-    if curl --silent --show-error --max-time "$timeout_sec" \
-        -H "Content-Type: application/json" \
-        "${secret_header_args[@]}" \
-        -X POST "$endpoint" \
-        -d "$payload" >/dev/null; then
+    if post_rshake_alert_payload "$endpoint" "$timeout_sec" "$payload" "watchdog:$alert_code"; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Watchdog alert ($alert_code) posted for $container_name."
         return 0
     fi
 
     echo -en "[\e[1;33mWARN\e[0m] "
-    echo "Failed to post watchdog alert ($alert_code) for $container_name."
+    echo "Failed to post watchdog alert ($alert_code) for $container_name (${LAST_RSHAKE_ALERT_POST_ERROR:-unknown error}; http=${LAST_RSHAKE_ALERT_HTTP_STATUS:-none})."
     return 0
 }
 
@@ -2881,7 +3179,7 @@ function write_update_state_files() {
 
     tmp_file="$(mktemp "/tmp/upri-sender-state.XXXXXX.json")" || return 1
     cat <<EOF > "$tmp_file"
-{"timestamp":"$(json_escape "$now_iso")","bundleTag":"$(json_escape "$bundle_tag")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","backendResult":"$(json_escape "$backend_result")","frontendResult":"$(json_escape "$frontend_result")","scriptSyncResult":"$(json_escape "$script_sync_result")","alertPostResult":"$(json_escape "$alert_post_result")","rollback":{"result":"$(json_escape "$LAST_ROLLBACK_RESULT")","backendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"frontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"backendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","frontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")"},"migration":{"result":"$(json_escape "$LAST_MIGRATION_RESULT")","summary":"$(json_escape "$LAST_MIGRATION_SUMMARY")","changed":"$(json_escape "$LAST_MIGRATION_CHANGED")","backendEnv":"$(json_escape "$LAST_MIGRATION_BACKEND_ENV_RESULT")","remoteTunnelEnv":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT")","remoteTunnelService":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT")","nextStep":"$(json_escape "$LAST_MIGRATION_NEXT_STEP")","remaining":"$(json_escape "$LAST_MIGRATION_REMAINING")"},"backend":{"exitCode":$backend_exit,"pullState":"$(json_escape "$backend_pull_state")","imageRef":"$(json_escape "$backend_ref")","bundleVersion":"$(json_escape "$backend_bundle_version")"},"frontend":{"exitCode":$frontend_exit,"pullState":"$(json_escape "$frontend_pull_state")","imageRef":"$(json_escape "$frontend_ref")","bundleVersion":"$(json_escape "$frontend_bundle_version")"}}
+{"timestamp":"$(json_escape "$now_iso")","bundleTag":"$(json_escape "$bundle_tag")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","backendResult":"$(json_escape "$backend_result")","frontendResult":"$(json_escape "$frontend_result")","scriptSyncResult":"$(json_escape "$script_sync_result")","alertPostResult":"$(json_escape "$alert_post_result")","alertHttpStatus":"$(json_escape "$LAST_ALERT_POST_HTTP_STATUS")","alertPostError":"$(json_escape "$LAST_ALERT_POST_ERROR")","rollback":{"result":"$(json_escape "$LAST_ROLLBACK_RESULT")","backendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"frontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"backendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","frontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")"},"migration":{"result":"$(json_escape "$LAST_MIGRATION_RESULT")","summary":"$(json_escape "$LAST_MIGRATION_SUMMARY")","changed":"$(json_escape "$LAST_MIGRATION_CHANGED")","backendEnv":"$(json_escape "$LAST_MIGRATION_BACKEND_ENV_RESULT")","remoteTunnelEnv":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT")","remoteTunnelService":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT")","nextStep":"$(json_escape "$LAST_MIGRATION_NEXT_STEP")","remaining":"$(json_escape "$LAST_MIGRATION_REMAINING")"},"tunnelEnrollment":{"result":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_RESULT")","summary":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_SUMMARY")","changed":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_CHANGED")","exitCode":$LAST_TUNNEL_ENROLLMENT_EXIT,"service":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT")","deviceId":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_DEVICE_ID")","remotePort":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_REMOTE_PORT")","endpoint":"$(json_escape "$AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENDPOINT")","nextStep":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_NEXT_STEP")","remaining":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_REMAINING")"},"backend":{"exitCode":$backend_exit,"pullState":"$(json_escape "$backend_pull_state")","imageRef":"$(json_escape "$backend_ref")","bundleVersion":"$(json_escape "$backend_bundle_version")"},"frontend":{"exitCode":$frontend_exit,"pullState":"$(json_escape "$frontend_pull_state")","imageRef":"$(json_escape "$frontend_ref")","bundleVersion":"$(json_escape "$frontend_bundle_version")"}}
 EOF
 
     if install_data_payload "$tmp_file" "$state_path" 0644; then
@@ -2910,6 +3208,11 @@ ROLLBACK_BACKEND_EXIT=$LAST_ROLLBACK_BACKEND_EXIT
 ROLLBACK_FRONTEND_EXIT=$LAST_ROLLBACK_FRONTEND_EXIT
 ROLLBACK_BACKEND_TARGET=$LAST_ROLLBACK_BACKEND_TARGET
 ROLLBACK_FRONTEND_TARGET=$LAST_ROLLBACK_FRONTEND_TARGET
+TUNNEL_ENROLLMENT_RESULT=$LAST_TUNNEL_ENROLLMENT_RESULT
+TUNNEL_ENROLLMENT_SERVICE_RESULT=$LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT
+TUNNEL_ENROLLMENT_NEXT_STEP=$LAST_TUNNEL_ENROLLMENT_NEXT_STEP
+ALERT_POST_HTTP_STATUS=$LAST_ALERT_POST_HTTP_STATUS
+ALERT_POST_ERROR=$LAST_ALERT_POST_ERROR
 STATE_TS=$now_epoch
 EOF
 }
@@ -2932,13 +3235,11 @@ function post_auto_update_alert() {
     local backend_bundle_version="${15}"
     local frontend_bundle_version="${16}"
     local script_sync_result="${17}"
+    local post_exit=0
 
-    if ! command -v curl >/dev/null 2>&1; then
-        echo -en "[\e[1;33mWARN\e[0m] "
-        echo "curl is unavailable; skipping auto-update alert post."
-        LAST_ALERT_POST_RESULT="skipped-no-curl"
-        return 0
-    fi
+    LAST_ALERT_POST_RESULT="pending"
+    LAST_ALERT_POST_HTTP_STATUS=""
+    LAST_ALERT_POST_ERROR=""
 
     local network station mac stream_id message_id occurred_at endpoint timeout_sec dedupe_key schema_version
     local device_json first_field
@@ -3002,20 +3303,16 @@ function post_auto_update_alert() {
 
     local payload
     payload=$(cat <<EOF
-{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"device.alert","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"AUTO_UPDATE","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-auto-update","notificationScope":"admin-only","backendExitCode":$backend_exit,"frontendExitCode":$frontend_exit,"backendPullState":"$(json_escape "$backend_pull_state")","frontendPullState":"$(json_escape "$frontend_pull_state")","backendScriptUpdate":"$(json_escape "$backend_script_update")","frontendScriptUpdate":"$(json_escape "$frontend_script_update")","bundleTag":"$(json_escape "$bundle_tag")","bundleVersion":"$(json_escape "$backend_bundle_version")","frontendBundleVersion":"$(json_escape "$frontend_bundle_version")","backendImageRef":"$(json_escape "$backend_image_ref")","frontendImageRef":"$(json_escape "$frontend_image_ref")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","scriptSyncResult":"$(json_escape "$script_sync_result")","rollbackResult":"$(json_escape "$LAST_ROLLBACK_RESULT")","rollbackBackendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"rollbackFrontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"rollbackBackendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","rollbackFrontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")","migrationResult":"$(json_escape "$LAST_MIGRATION_RESULT")","migrationChanged":"$(json_escape "$LAST_MIGRATION_CHANGED")","migrationSummary":"$(json_escape "$LAST_MIGRATION_SUMMARY")","migrationBackendEnv":"$(json_escape "$LAST_MIGRATION_BACKEND_ENV_RESULT")","migrationRemoteTunnelEnv":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT")","migrationRemoteTunnelService":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT")","migrationNextStep":"$(json_escape "$LAST_MIGRATION_NEXT_STEP")","migrationRemaining":"$(json_escape "$LAST_MIGRATION_REMAINING")"},"dedupeKey":"$(json_escape "$dedupe_key")"}
+{"schemaVersion":"$(json_escape "$schema_version")","messageId":"$(json_escape "$message_id")","type":"device.alert","occurredAt":"$(json_escape "$occurred_at")","device":$device_json,"status":"AUTO_UPDATE","alertCode":"$(json_escape "$alert_code")","severity":"$(json_escape "$severity")","summary":"$(json_escape "$summary")","details":{"source":"sender-stack-auto-update","notificationScope":"admin-only","backendExitCode":$backend_exit,"frontendExitCode":$frontend_exit,"backendPullState":"$(json_escape "$backend_pull_state")","frontendPullState":"$(json_escape "$frontend_pull_state")","backendScriptUpdate":"$(json_escape "$backend_script_update")","frontendScriptUpdate":"$(json_escape "$frontend_script_update")","bundleTag":"$(json_escape "$bundle_tag")","bundleVersion":"$(json_escape "$backend_bundle_version")","frontendBundleVersion":"$(json_escape "$frontend_bundle_version")","backendImageRef":"$(json_escape "$backend_image_ref")","frontendImageRef":"$(json_escape "$frontend_image_ref")","backendDigest":"$(json_escape "$backend_digest")","frontendDigest":"$(json_escape "$frontend_digest")","scriptSyncResult":"$(json_escape "$script_sync_result")","rollbackResult":"$(json_escape "$LAST_ROLLBACK_RESULT")","rollbackBackendExitCode":$LAST_ROLLBACK_BACKEND_EXIT,"rollbackFrontendExitCode":$LAST_ROLLBACK_FRONTEND_EXIT,"rollbackBackendTarget":"$(json_escape "$LAST_ROLLBACK_BACKEND_TARGET")","rollbackFrontendTarget":"$(json_escape "$LAST_ROLLBACK_FRONTEND_TARGET")","migrationResult":"$(json_escape "$LAST_MIGRATION_RESULT")","migrationChanged":"$(json_escape "$LAST_MIGRATION_CHANGED")","migrationSummary":"$(json_escape "$LAST_MIGRATION_SUMMARY")","migrationBackendEnv":"$(json_escape "$LAST_MIGRATION_BACKEND_ENV_RESULT")","migrationRemoteTunnelEnv":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_ENV_RESULT")","migrationRemoteTunnelService":"$(json_escape "$LAST_MIGRATION_REMOTE_TUNNEL_SERVICE_RESULT")","migrationNextStep":"$(json_escape "$LAST_MIGRATION_NEXT_STEP")","migrationRemaining":"$(json_escape "$LAST_MIGRATION_REMAINING")","tunnelEnrollmentResult":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_RESULT")","tunnelEnrollmentChanged":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_CHANGED")","tunnelEnrollmentSummary":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_SUMMARY")","tunnelEnrollmentExitCode":$LAST_TUNNEL_ENROLLMENT_EXIT,"tunnelEnrollmentService":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_SERVICE_RESULT")","tunnelEnrollmentDeviceId":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_DEVICE_ID")","tunnelEnrollmentRemotePort":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_REMOTE_PORT")","tunnelEnrollmentEndpoint":"$(json_escape "$AUTO_UPDATE_REMOTE_TUNNEL_ENROLL_ENDPOINT")","tunnelEnrollmentNextStep":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_NEXT_STEP")","tunnelEnrollmentRemaining":"$(json_escape "$LAST_TUNNEL_ENROLLMENT_REMAINING")"},"dedupeKey":"$(json_escape "$dedupe_key")"}
 EOF
 )
 
-    local -a secret_header_args=()
-    if [[ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]]; then
-        secret_header_args=(-H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}")
-    fi
+    post_rshake_alert_payload "$endpoint" "$timeout_sec" "$payload" "auto-update:$alert_code"
+    post_exit=$?
+    LAST_ALERT_POST_HTTP_STATUS="$LAST_RSHAKE_ALERT_HTTP_STATUS"
+    LAST_ALERT_POST_ERROR="$LAST_RSHAKE_ALERT_POST_ERROR"
 
-    if curl --silent --show-error --max-time "$timeout_sec" \
-        -H "Content-Type: application/json" \
-        "${secret_header_args[@]}" \
-        -X POST "$endpoint" \
-        -d "$payload" >/dev/null; then
+    if [[ $post_exit -eq 0 ]]; then
         echo -en "[  \e[32mOK\e[0m  ] "
         echo "Auto-update alert posted to central endpoint."
         LAST_ALERT_POST_RESULT="success"
@@ -3023,8 +3320,14 @@ EOF
     fi
 
     echo -en "[\e[1;33mWARN\e[0m] "
-    echo "Failed to post auto-update alert to central endpoint."
-    LAST_ALERT_POST_RESULT="failed"
+    echo "Failed to post auto-update alert to central endpoint (${LAST_ALERT_POST_ERROR:-unknown error}; http=${LAST_ALERT_POST_HTTP_STATUS:-none})."
+    if [[ $post_exit -eq 127 ]]; then
+        LAST_ALERT_POST_RESULT="skipped-no-curl"
+    elif [[ -n "$LAST_ALERT_POST_HTTP_STATUS" && "$LAST_ALERT_POST_HTTP_STATUS" != "000" ]]; then
+        LAST_ALERT_POST_RESULT="failed-http-${LAST_ALERT_POST_HTTP_STATUS}"
+    else
+        LAST_ALERT_POST_RESULT="failed-curl"
+    fi
     return 0
 }
 
@@ -3208,6 +3511,7 @@ function update_stack_with_alert() {
     LAST_ROLLBACK_BACKEND_TARGET="none"
     LAST_ROLLBACK_FRONTEND_TARGET="none"
     reset_auto_update_migration_state
+    reset_auto_update_tunnel_enrollment_state
 
     rm -f "$LEGACY_AUTO_UPDATE_STATE_FILE" >/dev/null 2>&1 || true
     refresh_sender_scripts
@@ -3343,11 +3647,22 @@ function update_stack_with_alert() {
     fi
 
     finalize_auto_update_migration_state "$backend_was_stale" "$tunnel_was_stale"
+    if [[ $backend_exit -eq 0 && $frontend_exit -eq 0 ]]; then
+        attempt_auto_update_tunnel_enrollment || true
+    fi
 
     if [[ $backend_exit -ne 0 || $frontend_exit -ne 0 ]]; then
         alert_code="AUTO_UPDATE_FAILED"
         severity="critical"
         summary="Sender auto-update executed with failures."
+    elif [[ "$LAST_TUNNEL_ENROLLMENT_RESULT" == "completed" ]]; then
+        alert_code="AUTO_UPDATE_TUNNEL_ENROLLMENT_COMPLETED"
+        severity="info"
+        summary="$LAST_TUNNEL_ENROLLMENT_SUMMARY"
+    elif [[ "$LAST_TUNNEL_ENROLLMENT_RESULT" == "partial" || "$LAST_TUNNEL_ENROLLMENT_RESULT" == "failed" || "$LAST_TUNNEL_ENROLLMENT_RESULT" == "skipped-no-token" || "$LAST_TUNNEL_ENROLLMENT_RESULT" == "skipped-missing-helper" || "$LAST_TUNNEL_ENROLLMENT_RESULT" == "skipped-no-root" ]]; then
+        alert_code="AUTO_UPDATE_TUNNEL_ENROLLMENT_ATTENTION"
+        severity="warning"
+        summary="$LAST_TUNNEL_ENROLLMENT_SUMMARY"
     elif [[ "$backend_pull_state" == "no-change" && "$frontend_pull_state" == "no-change" ]]; then
         alert_code="AUTO_UPDATE_NO_CHANGE"
         severity="info"

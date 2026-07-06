@@ -50,12 +50,63 @@ read_device_value() {
   return 1
 }
 
-post_sync_failure_alert() {
-  reason="$1"
+post_alert_payload() {
+  payload="$1"
+  alert_label="$2"
 
   if ! command -v curl >/dev/null 2>&1; then
+    log_warn "curl is unavailable; skipping $alert_label alert post."
     return 0
   fi
+
+  response_file="$(mktemp /tmp/upri-rshake-alert-response.XXXXXX)" || return 1
+  error_file="$(mktemp /tmp/upri-rshake-alert-error.XXXXXX)" || {
+    rm -f "$response_file" >/dev/null 2>&1
+    return 1
+  }
+
+  if [ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]; then
+    http_code="$(curl --silent --show-error --max-time "$ALERT_TIMEOUT_SEC" \
+      -H "Content-Type: application/json" \
+      -H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}" \
+      -X POST "$ALERT_ENDPOINT" \
+      -d "$payload" \
+      -o "$response_file" \
+      -w "%{http_code}" 2>"$error_file")"
+    curl_exit=$?
+  else
+    http_code="$(curl --silent --show-error --max-time "$ALERT_TIMEOUT_SEC" \
+      -H "Content-Type: application/json" \
+      -X POST "$ALERT_ENDPOINT" \
+      -d "$payload" \
+      -o "$response_file" \
+      -w "%{http_code}" 2>"$error_file")"
+    curl_exit=$?
+  fi
+
+  case "$http_code" in
+    2??)
+      if [ "$curl_exit" -eq 0 ]; then
+        rm -f "$response_file" "$error_file" >/dev/null 2>&1
+        return 0
+      fi
+      ;;
+  esac
+
+  response_body="$(head -c 300 "$response_file" 2>/dev/null | tr '\r\n' '  ' | xargs 2>/dev/null || true)"
+  error_body="$(head -c 300 "$error_file" 2>/dev/null | tr '\r\n' '  ' | xargs 2>/dev/null || true)"
+  if [ "$curl_exit" -ne 0 ]; then
+    log_warn "Failed to post $alert_label alert (curl exit $curl_exit${error_body:+: $error_body})."
+  else
+    log_warn "Failed to post $alert_label alert (HTTP ${http_code:-unknown}${response_body:+: $response_body})."
+  fi
+
+  rm -f "$response_file" "$error_file" >/dev/null 2>&1
+  return 1
+}
+
+post_sync_failure_alert() {
+  reason="$1"
 
   network="$(read_device_value /opt/settings/sys/NET.txt)"
   station="$(read_device_value /opt/settings/sys/STN.txt)"
@@ -74,18 +125,7 @@ post_sync_failure_alert() {
   dedupe_key="auto-update.$(sanitize_token "${station:-$stream_id}").script-sync-failed"
   payload="{\"schemaVersion\":\"1.0\",\"messageId\":\"$(json_escape "$message_id")\",\"type\":\"device.alert\",\"occurredAt\":\"$(json_escape "$occurred_at")\",\"device\":{\"network\":\"$(json_escape "$network")\",\"station\":\"$(json_escape "$station")\",\"streamId\":\"$(json_escape "$stream_id")\"},\"status\":\"AUTO_UPDATE\",\"alertCode\":\"AUTO_UPDATE_SCRIPT_SYNC_FAILED\",\"severity\":\"warning\",\"summary\":\"Sender startup hook could not sync host scripts.\",\"details\":{\"source\":\"sender-startup-hook\",\"notificationScope\":\"admin-only\",\"bundleTag\":\"$(json_escape "$BUNDLE_TAG")\",\"bundleVersion\":\"$(json_escape "$BUNDLE_VERSION")\",\"targetDir\":\"$(json_escape "$HOST_SCRIPTS_DIR")\",\"reason\":\"$(json_escape "$reason")\"},\"dedupeKey\":\"$(json_escape "$dedupe_key")\"}"
 
-  if [ -n "${RSHAKE_ALERT_SHARED_SECRET:-}" ]; then
-    curl --silent --show-error --max-time "$ALERT_TIMEOUT_SEC" \
-      -H "Content-Type: application/json" \
-      -H "X-RShake-Alert-Secret: ${RSHAKE_ALERT_SHARED_SECRET}" \
-      -X POST "$ALERT_ENDPOINT" \
-      -d "$payload" >/dev/null 2>&1 || true
-  else
-    curl --silent --show-error --max-time "$ALERT_TIMEOUT_SEC" \
-      -H "Content-Type: application/json" \
-      -X POST "$ALERT_ENDPOINT" \
-      -d "$payload" >/dev/null 2>&1 || true
-  fi
+  post_alert_payload "$payload" "script-sync-failed" || true
 }
 
 acquire_lock() {

@@ -44,6 +44,14 @@ describe('GET /health/sender-state', () => {
       bundleTag: 'latest',
       backendResult: 'updated',
       frontendResult: 'updated',
+      alertPostResult: 'failed-http-403',
+      alertHttpStatus: '403',
+      alertPostError: 'HTTP 403: invalid shared secret',
+      tunnelEnrollment: {
+        result: 'partial',
+        service: 'active-disconnected',
+        nextStep: 'check-remote-tunnel-service',
+      },
     }));
     await fs.writeFile(watchdogStatePath, 'WATCHDOG_BACKEND_LAST_RESTART_TS=123\nWATCHDOG_FRONTEND_LAST_RESTART_TS=456\n');
     await fs.writeFile(diskStatePath, 'LAST_DISK_ALERT_LEVEL=warn\nLAST_DISK_ALERT_FREE_PCT=11\n');
@@ -80,6 +88,8 @@ describe('GET /health/sender-state', () => {
     const response = await request(app).get('/health/sender-state');
     expect(response.body?.payload?.tokenRefreshAlerts?.state?.failureCount).toBe(1);
     expect(response.body?.payload?.autoUpdate?.state?.backendResult).toBe('updated');
+    expect(response.body?.payload?.autoUpdate?.state?.alertHttpStatus).toBe('403');
+    expect(response.body?.payload?.autoUpdate?.state?.tunnelEnrollment?.service).toBe('active-disconnected');
     expect(response.body?.payload?.watchdog?.state?.WATCHDOG_BACKEND_LAST_RESTART_TS).toBe(123);
     expect(response.body?.payload?.diskAlerts?.state?.LAST_DISK_ALERT_LEVEL).toBe('warn');
     expect(response.body?.payload?.remoteTunnel?.state?.deviceId).toBe('AM-R24FA');
