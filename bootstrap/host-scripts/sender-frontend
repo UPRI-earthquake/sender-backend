@@ -608,7 +608,7 @@ function create_network() {
             # 1st volume: workaround for docker's oci runtime error
             # 2nd volume: contains NET and STAT info
             # 3rd volume: will contain local file storage of sender-backend server
-  
+
         if [[ $? -eq 0 ]]; then
             echo -en "[  \e[32mOK\e[0m  ] "
             echo "Network $DOCKER_NETWORK created successfully."

@@ -1,9 +1,9 @@
 #!/bin/bash
 set -u
 
-BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/sender-backend.sh"
-FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/rshake-alerts/sender-frontend.sh"
-TUNNEL_SETUP_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/setup-remote-tunnel.sh"
+BACKEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/dev/sender-backend.sh"
+FRONTEND_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/dev/sender-frontend.sh"
+TUNNEL_SETUP_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/dev/setup-remote-tunnel.sh"
 
 INSTALL_DIR="/usr/local/bin"
 HOST_SCRIPTS_DIR="${SENDER_HOST_SCRIPTS_DIR:-/opt/upri/host-scripts}"

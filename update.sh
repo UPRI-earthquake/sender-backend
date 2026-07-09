@@ -14,7 +14,7 @@ BACKEND_HOST_SCRIPT="${HOST_SCRIPTS_DIR}/sender-backend"
 FRONTEND_HOST_SCRIPT="${HOST_SCRIPTS_DIR}/sender-frontend"
 
 BACKEND_SOURCE_SCRIPT="${SCRIPT_DIR}/sender-backend.sh"
-FRONTEND_FALLBACK_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/rshake-alerts/sender-frontend.sh"
+FRONTEND_FALLBACK_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/dev/sender-frontend.sh"
 
 BOOTSTRAP_FAILED=0
 

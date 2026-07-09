@@ -4,13 +4,13 @@ Sender-backend program is the server-side component of the sender web applicatio
 ## Installation on a [RaspberryShake Device](https://shop.raspberryshake.org/)
 To install the entire sender software package, run the following command on the [RaspberryShake terminal](https://manual.raspberryshake.org/ssh.html):
 ```bash
-bash <(curl "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/install.sh")
+bash <(curl "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/dev/install.sh")
 ```
 
 ### Optional: pre-install health check
 Before installing, you can verify connectivity, disk space, OS/arch, and time sync:
 ```bash
-bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/preinstall-health-check.sh")
+bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/dev/preinstall-health-check.sh")
 ```
 If everything passes, proceed with the installer command above. Results are printed directly to the terminal.
 
@@ -23,7 +23,7 @@ The backend container mounts `/opt/upri/host-scripts` and runs a startup sync ho
 
 For existing deployments using older launchers, run one-time bootstrap:
 ```bash
-bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/rshake-alerts/update.sh")
+bash <(curl -fsSL "https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/dev/update.sh")
 ```
 After bootstrap, normal operator commands stay the same (`sender-backend START`, etc.).
 
