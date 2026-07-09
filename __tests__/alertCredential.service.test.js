@@ -37,7 +37,20 @@ describe('alertCredential.service', () => {
     delete process.env.RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT;
 
     expect(alertCredentialService.getStoredAlertSharedSecret()).toBe('issued-secret');
-    expect(fs.readFileSync(runtimeEnvFile, 'utf8')).toContain('RSHAKE_ALERT_SHARED_SECRET=issued-secret');
+    expect(fs.readFileSync(runtimeEnvFile, 'utf8')).toContain("RSHAKE_ALERT_SHARED_SECRET='issued-secret'");
+  });
+
+  it('persists shell-safe quoted values and reloads unquoted secrets', async () => {
+    await alertCredentialService.persistAlertSharedSecret("issued ' secret; $(echo unsafe)", {
+      issuedAt: "2026-03-13T00:00:00.000Z",
+    });
+
+    delete process.env.RSHAKE_ALERT_SHARED_SECRET;
+    delete process.env.RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT;
+
+    const raw = fs.readFileSync(runtimeEnvFile, 'utf8');
+    expect(raw).toContain("RSHAKE_ALERT_SHARED_SECRET='issued '\\'' secret; $(echo unsafe)'");
+    expect(alertCredentialService.getStoredAlertSharedSecret()).toBe("issued ' secret; $(echo unsafe)");
   });
 
   it('clears the shared secret from the runtime env file', async () => {
@@ -45,6 +58,6 @@ describe('alertCredential.service', () => {
     await alertCredentialService.clearAlertSharedSecret();
 
     expect(alertCredentialService.getStoredAlertSharedSecret()).toBe('');
-    expect(fs.readFileSync(runtimeEnvFile, 'utf8')).toContain('RSHAKE_ALERT_SHARED_SECRET=');
+    expect(fs.readFileSync(runtimeEnvFile, 'utf8')).toContain("RSHAKE_ALERT_SHARED_SECRET=''");
   });
 });

@@ -5,6 +5,21 @@ function normalizeSecret(value) {
   return String(value || '').trim();
 }
 
+function shellQuote(value) {
+  return `'${normalizeSecret(value).replace(/'/g, "'\\''")}'`;
+}
+
+function unquoteEnvValue(value) {
+  const raw = String(value || '').trim();
+  if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
+    return raw
+      .slice(1, -1)
+      .split("'\\''")
+      .join("'");
+  }
+  return raw;
+}
+
 function getRuntimeEnvPath() {
   const configured = normalizeSecret(
     process.env.RSHAKE_ALERT_RUNTIME_ENV_FILE || process.env.RSHAKE_ALERT_SHARED_SECRET_FILE,
@@ -22,7 +37,7 @@ function parseEnvFile(raw = '') {
       const separatorIndex = trimmed.indexOf('=');
       if (separatorIndex <= 0) return;
       const key = trimmed.slice(0, separatorIndex).trim();
-      const value = trimmed.slice(separatorIndex + 1).trim();
+      const value = unquoteEnvValue(trimmed.slice(separatorIndex + 1));
       if (!key) return;
       parsed[key] = value;
     });
@@ -67,8 +82,8 @@ async function writeEnvFile({ sharedSecret = '', issuedAt = '' } = {}) {
   const tmpPath = path.join(dir, `.${baseName}.${process.pid}.${Date.now()}.tmp`);
   const lines = [
     '# Managed by sender-backend. Used for authenticated RShake alert posts.',
-    `RSHAKE_ALERT_SHARED_SECRET=${normalizeSecret(sharedSecret)}`,
-    `RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT=${normalizeSecret(issuedAt)}`,
+    `RSHAKE_ALERT_SHARED_SECRET=${shellQuote(sharedSecret)}`,
+    `RSHAKE_ALERT_SHARED_SECRET_ISSUED_AT=${shellQuote(issuedAt)}`,
   ];
 
   await fs.promises.mkdir(dir, { recursive: true });

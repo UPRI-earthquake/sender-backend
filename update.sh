@@ -14,6 +14,7 @@ BACKEND_HOST_SCRIPT="${HOST_SCRIPTS_DIR}/sender-backend"
 FRONTEND_HOST_SCRIPT="${HOST_SCRIPTS_DIR}/sender-frontend"
 
 BACKEND_SOURCE_SCRIPT="${SCRIPT_DIR}/sender-backend.sh"
+BACKEND_FALLBACK_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-backend/dev/sender-backend.sh"
 FRONTEND_FALLBACK_URL="https://raw.githubusercontent.com/UPRI-earthquake/sender-frontend/dev/sender-frontend.sh"
 
 BOOTSTRAP_FAILED=0
@@ -97,11 +98,6 @@ run_or_fail() {
 }
 
 ensure_prerequisites() {
-    [[ -x "$BACKEND_SOURCE_SCRIPT" ]] || {
-        fail "Missing backend source script at $BACKEND_SOURCE_SCRIPT"
-        exit 1
-    }
-
     command -v docker >/dev/null 2>&1 || {
         fail "docker is required"
         exit 1
@@ -135,11 +131,32 @@ backup_existing_launchers() {
 }
 
 seed_host_scripts() {
+    local tmp_backend
     local tmp_frontend
 
     run_or_fail "Ensured host script directory $HOST_SCRIPTS_DIR" sudo mkdir -p "$HOST_SCRIPTS_DIR" || return 1
 
-    run_or_fail "Seeded backend host script" install_file_with_sudo "$BACKEND_SOURCE_SCRIPT" "$BACKEND_HOST_SCRIPT" 0755 || return 1
+    if [[ -x "$BACKEND_SOURCE_SCRIPT" ]]; then
+        run_or_fail "Seeded backend host script" install_file_with_sudo "$BACKEND_SOURCE_SCRIPT" "$BACKEND_HOST_SCRIPT" 0755 || return 1
+    elif command -v curl >/dev/null 2>&1; then
+        tmp_backend="$(mktemp /tmp/sender-backend.XXXXXX)" || return 1
+        if curl -fsSL "$BACKEND_FALLBACK_URL" -o "$tmp_backend"; then
+            run_or_fail "Seeded backend host script from fallback URL" install_file_with_sudo "$tmp_backend" "$BACKEND_HOST_SCRIPT" 0755 || {
+                rm -f "$tmp_backend" >/dev/null 2>&1
+                return 1
+            }
+            rm -f "$tmp_backend" >/dev/null 2>&1
+        else
+            rm -f "$tmp_backend" >/dev/null 2>&1
+            fail "Unable to download backend host script from fallback URL"
+            BOOTSTRAP_FAILED=1
+            return 1
+        fi
+    else
+        fail "Missing backend source script at $BACKEND_SOURCE_SCRIPT and curl is unavailable"
+        BOOTSTRAP_FAILED=1
+        return 1
+    fi
 
     if [[ -f "$BACKUP_DIR/sender-frontend" ]]; then
         run_or_fail "Seeded frontend host script from launcher backup" install_file_with_sudo "$BACKUP_DIR/sender-frontend" "$FRONTEND_HOST_SCRIPT" 0755 || return 1

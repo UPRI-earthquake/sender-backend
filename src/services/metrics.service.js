@@ -100,7 +100,9 @@ function scheduleHistoryFlush() {
         history: state.health.history,
       });
     } catch (error) {
-      console.log(`Failed to persist health history: ${error.message || error}`);
+      if (process.env.NODE_ENV !== 'test') {
+        console.log(`Failed to persist health history: ${error.message || error}`);
+      }
     }
   }, delayMs);
 

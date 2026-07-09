@@ -19,9 +19,7 @@ if [ -r "$BUNDLE_VERSION_FILE" ]; then
 fi
 
 if [ -z "${RSHAKE_ALERT_SHARED_SECRET:-}" ] && [ -r "$ALERT_RUNTIME_ENV_FILE" ]; then
-  RSHAKE_ALERT_SHARED_SECRET="$(
-    sed -n 's/^RSHAKE_ALERT_SHARED_SECRET=//p' "$ALERT_RUNTIME_ENV_FILE" | head -n 1
-  )"
+  . "$ALERT_RUNTIME_ENV_FILE" 2>/dev/null || true
 fi
 
 log_info() {
