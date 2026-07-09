@@ -1,9 +1,10 @@
 const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 const https = require('https');
 const jwt = require('jsonwebtoken');
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const utils = require('./utils');
+const alertCredentialService = require('./alertCredential.service');
 
 const localDbPath = (fileName) => `${process.env.LOCALDBS_DIRECTORY || './localDBs'}/${fileName}`;
 const tokenPath = () => localDbPath('token.json');
@@ -37,6 +38,10 @@ const tokenLeewaySeconds = 300; // refresh tokens 5 minutes before expiry
 const refreshTokenLeewaySeconds = Number(process.env.REFRESH_TOKEN_LEEWAY_SECONDS || 24 * 60 * 60); // default 24h leeway for refresh tokens
 const RELINK_REQUIRED_ERROR_CODE = 'RELINK_REQUIRED';
 const deviceStatusPath = '/device/status';
+const alertCredentialPath = '/device/alert-credential';
+const allowInsecureW1Tls = String(process.env.W1_ALLOW_INSECURE_TLS || 'true').trim().toLowerCase() === 'true';
+const httpsAgent = new https.Agent({ rejectUnauthorized: !allowInsecureW1Tls });
+const defaultProdW1Host = 'earthquake.up.edu.ph/api';
 
 function formatRelinkMessage(reason) {
   if (!reason) {
@@ -64,6 +69,16 @@ function unwrapDeviceInfo(payload) {
     return payload.deviceInfo;
   }
   return payload;
+}
+
+function unwrapAlertCredential(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.rshakeAlertCredential && typeof payload.rshakeAlertCredential === 'object') {
+    return payload.rshakeAlertCredential;
+  }
+  return null;
 }
 
 function roundToDecimals(value, decimals = 2) {
@@ -160,7 +175,12 @@ async function readJsonFile(filePath, fallback) {
 }
 
 async function writeJsonFile(filePath, data) {
-  await fs.promises.writeFile(filePath, JSON.stringify(data));
+  const dir = path.dirname(filePath);
+  const baseName = path.basename(filePath);
+  const tmpPath = path.join(dir, `.${baseName}.${process.pid}.${Date.now()}.tmp`);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(tmpPath, JSON.stringify(data));
+  await fs.promises.rename(tmpPath, filePath);
 }
 
 function normalizeDeviceInfo(rawData) {
@@ -189,6 +209,69 @@ function formatCoordinate(value) {
   const rounded = roundToDecimals(value);
   if (rounded === null || rounded === undefined) return value;
   return String(rounded);
+}
+
+function buildStreamIdFromFields(network, station) {
+  if (!network || !station) {
+    return null;
+  }
+  return `${network}_${station}_.*/MSEED`;
+}
+
+function normalizeIdentityCandidate(candidate = {}) {
+  const network = typeof candidate.network === 'string' ? candidate.network.trim() : candidate.network;
+  const station = typeof candidate.station === 'string' ? candidate.station.trim() : candidate.station;
+  const streamId = typeof candidate.streamId === 'string' ? candidate.streamId.trim() : candidate.streamId;
+
+  return {
+    source: candidate.source || 'unknown',
+    network: network || null,
+    station: station || null,
+    streamId: streamId || null,
+  };
+}
+
+function buildIdentityCandidates(storedInfo = {}, hostConfig = {}) {
+  const candidates = [
+    normalizeIdentityCandidate({
+      source: 'host',
+      network: hostConfig?.network,
+      station: hostConfig?.station,
+      streamId: hostConfig?.streamId || buildStreamIdFromFields(hostConfig?.network, hostConfig?.station),
+    }),
+    normalizeIdentityCandidate({
+      source: 'stored',
+      network: storedInfo?.network,
+      station: storedInfo?.station,
+      streamId: storedInfo?.streamId || buildStreamIdFromFields(storedInfo?.network, storedInfo?.station),
+    }),
+  ].filter((candidate) => candidate.streamId || (candidate.network && candidate.station));
+
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.network || ''}|${candidate.station || ''}|${candidate.streamId || ''}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+async function resolveRemoteLinkState(identityCandidates = []) {
+  for (const candidate of identityCandidates) {
+    if (!candidate?.network || !candidate?.station) {
+      continue;
+    }
+
+    const { state } = await fetchRemoteLinkState(candidate.network, candidate.station);
+    if (state === 'notLinked') {
+      continue;
+    }
+    return state;
+  }
+
+  return 'unknown';
 }
 
 async function persistDeviceInfo(deviceInfo, { overwrite = false } = {}) {
@@ -246,15 +329,30 @@ async function persistTokenPair({ accessToken, refreshToken, deviceInfo }) {
   return tokenInfo;
 }
 
+async function persistAlertCredential(alertCredential) {
+  const sharedSecret = String(alertCredential?.sharedSecret || '').trim();
+  if (!sharedSecret) {
+    return { persisted: false };
+  }
+
+  return alertCredentialService.persistAlertSharedSecret(sharedSecret, {
+    issuedAt: alertCredential?.issuedAt || '',
+  });
+}
+
 async function getStoredDeviceInfo() {
   const stored = await readJsonFile(deviceInfoPath(), defaultDeviceInfo);
   return normalizeDeviceInfo(stored);
 }
 
 function buildW1BaseUrl() {
-  return (process.env.NODE_ENV === 'production')
-    ? `https://${process.env.W1_PROD_IP}`
-    : `http://${process.env.W1_DEV_IP}:${process.env.W1_DEV_PORT}`;
+  if (process.env.NODE_ENV === 'production') {
+    const configuredHost = String(process.env.W1_PROD_IP || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const prodHost = configuredHost || defaultProdW1Host;
+    return `https://${prodHost}`;
+  }
+
+  return `http://${process.env.W1_DEV_IP}:${process.env.W1_DEV_PORT}`;
 }
 
 // Function for checking if a jwt access token is already saved 
@@ -346,7 +444,7 @@ async function getRefreshTokenStatus() {
   }
 }
 
-async function ensureValidAccessToken() {
+async function ensureValidAccessToken({ skipAlertCredentialSync = false } = {}) {
   const tokenData = await readJsonFile(tokenPath(), createDefaultTokenInfo());
   if (tokenData?.accessToken) {
     if (!isTokenExpiring(tokenData.accessToken)) {
@@ -354,10 +452,10 @@ async function ensureValidAccessToken() {
     }
   }
 
-  return refreshAuthToken();
+  return refreshAuthToken({ skipAlertCredentialSync });
 }
 
-async function refreshAuthToken() {
+async function refreshAuthToken({ skipAlertCredentialSync = false } = {}) {
   const [tokenData, refreshTokenStatus] = await Promise.all([
     readJsonFile(tokenPath(), createDefaultTokenInfo()),
     getRefreshTokenStatus(),
@@ -386,39 +484,109 @@ async function refreshAuthToken() {
     deviceInfo: payload.deviceInfo,
   });
 
+  if (!skipAlertCredentialSync) {
+    const issuedCredential = unwrapAlertCredential(payload);
+    if (issuedCredential?.sharedSecret) {
+      await persistAlertCredential(issuedCredential);
+    } else {
+      await syncRshakeAlertCredential({
+        accessToken: payload.accessToken,
+        allowTokenRefresh: false,
+      });
+    }
+  }
+
   return payload.accessToken;
 }
 
 async function refreshIfExpiringSoon() {
+  const refreshResult = await refreshIfExpiringSoonWithStatus();
+  if (refreshResult.attempted && !refreshResult.success) {
+    const err = new Error(refreshResult.errorMessage || 'Proactive token refresh failed');
+    if (refreshResult.errorCode) {
+      err.code = refreshResult.errorCode;
+    }
+    if (refreshResult.errorStatus) {
+      err.status = refreshResult.errorStatus;
+    }
+    throw err;
+  }
+  return refreshResult.accessToken || null;
+}
+
+async function refreshIfExpiringSoonWithStatus() {
   const tokenData = await readJsonFile(tokenPath(), createDefaultTokenInfo());
   const [status, refreshStatus] = await Promise.all([
     getAccessTokenStatus(),
     getRefreshTokenStatus(),
   ]);
 
-  if (['missing', 'invalid', 'expired', 'corrupted'].includes(refreshStatus.state)) {
-    return null;
-  }
-
   // If token missing/invalid/expired, try refresh immediately
-  if (['missing', 'invalid', 'corrupted', 'expired'].includes(status.state)) {
-    return refreshAuthToken();
-  }
-
   // If token exists but expiring soon per configured leeway, refresh
-  if (status.state === 'valid' && typeof status.secondsToExpiry === 'number') {
-    const msToExpiry = status.secondsToExpiry * 1000;
-    if (msToExpiry <= refreshLeewayMs) {
-      return refreshAuthToken();
-    }
+  const shouldRefresh =
+    ['missing', 'invalid', 'corrupted', 'expired'].includes(status.state)
+    || (
+      status.state === 'valid'
+      && typeof status.secondsToExpiry === 'number'
+      && status.secondsToExpiry * 1000 <= refreshLeewayMs
+    );
+
+  if (!shouldRefresh) {
+    return {
+      attempted: false,
+      success: true,
+      reason: 'notDue',
+      accessToken: tokenData?.accessToken || null,
+      tokenStatusBefore: status,
+      refreshTokenStatus: refreshStatus,
+    };
   }
 
-  return tokenData?.accessToken || null;
+  if (['missing', 'invalid', 'expired', 'corrupted'].includes(refreshStatus.state)) {
+    return {
+      attempted: true,
+      success: false,
+      reason: 'refreshTokenUnavailable',
+      accessToken: tokenData?.accessToken || null,
+      tokenStatusBefore: status,
+      refreshTokenStatus: refreshStatus,
+      errorMessage: refreshStatus?.reason || 'Refresh token unavailable',
+      errorCode: 'REFRESH_TOKEN_UNAVAILABLE',
+      errorStatus: null,
+    };
+  }
+
+  try {
+    const refreshedAccessToken = await refreshAuthToken();
+    const tokenStatusAfter = await getAccessTokenStatus();
+    return {
+      attempted: true,
+      success: true,
+      reason: 'refreshed',
+      accessToken: refreshedAccessToken,
+      tokenStatusBefore: status,
+      tokenStatusAfter,
+      refreshTokenStatus: refreshStatus,
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      success: false,
+      reason: 'refreshFailed',
+      accessToken: tokenData?.accessToken || null,
+      tokenStatusBefore: status,
+      refreshTokenStatus: refreshStatus,
+      errorMessage: error?.message || String(error),
+      errorCode: error?.code || null,
+      errorStatus: error?.status || error?.response?.status || error?.meta?.status || null,
+    };
+  }
 }
 
 async function clearLocalLinkState() {
   await persistTokenPair({ accessToken: null, refreshToken: null, deviceInfo: defaultDeviceInfo });
   await writeJsonFile(serversPath(), []);
+  await alertCredentialService.clearAlertSharedSecret();
 }
 
 async function getDeviceDetails() {
@@ -427,24 +595,23 @@ async function getDeviceDetails() {
   const token = await readJsonFile(tokenPath(), createDefaultTokenInfo());
   const tokenStatus = await getAccessTokenStatus();
   const refreshTokenStatus = await getRefreshTokenStatus();
+  const identityCandidates = buildIdentityCandidates(storedInfo, hostConfig);
+  const preferredIdentity = identityCandidates[0] || {};
 
   const mergedDevice = {
-    network: storedInfo.network || hostConfig.network,
-    station: storedInfo.station || hostConfig.station,
+    network: preferredIdentity.network || storedInfo.network || hostConfig?.network || null,
+    station: preferredIdentity.station || storedInfo.station || hostConfig?.station || null,
     longitude: storedInfo.longitude ?? hostConfig.longitude,
     latitude: storedInfo.latitude ?? hostConfig.latitude,
     elevation: storedInfo.elevation ?? hostConfig.elevation,
-    streamId: storedInfo.streamId || hostConfig.streamId,
+    streamId: preferredIdentity.streamId || storedInfo.streamId || hostConfig?.streamId || null,
   };
 
   let linkState = 'unknown';
-  if (mergedDevice.network && mergedDevice.station) {
-    try {
-      const { state } = await fetchRemoteLinkState(mergedDevice.network, mergedDevice.station);
-      linkState = state;
-    } catch (error) {
-      console.log(`Remote link state lookup failed: ${error}`);
-    }
+  try {
+    linkState = await resolveRemoteLinkState(identityCandidates);
+  } catch (error) {
+    console.log(`Remote link state lookup failed: ${error}`);
   }
 
   return {
@@ -490,9 +657,7 @@ async function getUnlinkIdentifiers() {
   const storedInfo = await getStoredDeviceInfo();
   const hostConfig = normalizeHostConfig(utils.getHostDeviceConfig());
 
-  const streamIdFromStoredFields = (storedInfo.network && storedInfo.station)
-    ? `${storedInfo.network}_${storedInfo.station}_.*/MSEED`
-    : null;
+  const streamIdFromStoredFields = buildStreamIdFromFields(storedInfo.network, storedInfo.station);
 
   const streamId = storedInfo.streamId
     || streamIdFromStoredFields
@@ -534,6 +699,63 @@ async function requestRefreshToken(refreshToken) {
     }
     throw error;
   }
+}
+
+async function requestAlertCredential(accessToken, identifiers = {}) {
+  const url = `${buildW1BaseUrl()}${alertCredentialPath}`;
+  const axiosConfig = {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    timeout: Number(process.env.RSHAKE_ALERT_CREDENTIAL_TIMEOUT_MS || 5000),
+  };
+
+  if (process.env.NODE_ENV === 'production') {
+    axiosConfig.httpsAgent = httpsAgent;
+  }
+
+  const response = await axios.post(url, identifiers, axiosConfig);
+  const payload = extractPayload(response.data);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('W1 alert credential response missing payload');
+  }
+  return payload;
+}
+
+async function syncRshakeAlertCredential({ accessToken = '', allowTokenRefresh = false } = {}) {
+  let resolvedAccessToken = String(accessToken || '').trim();
+  if (!resolvedAccessToken && allowTokenRefresh) {
+    resolvedAccessToken = await ensureValidAccessToken({ skipAlertCredentialSync: true });
+  }
+  if (!resolvedAccessToken) {
+    return { str: 'skipped', reason: 'missingAccessToken' };
+  }
+
+  const identifiers = await getUnlinkIdentifiers();
+  if (!identifiers.streamId && !identifiers.macAddress && !(identifiers.network && identifiers.station)) {
+    return { str: 'skipped', reason: 'missingDeviceIdentifiers' };
+  }
+
+  const payload = await requestAlertCredential(resolvedAccessToken, {
+    macAddress: identifiers.macAddress || undefined,
+    streamId: identifiers.streamId || undefined,
+    network: identifiers.network || undefined,
+    station: identifiers.station || undefined,
+  });
+
+  if (!payload.sharedSecret) {
+    return { str: 'skipped', reason: 'missingSharedSecret' };
+  }
+
+  await persistAlertCredential(payload);
+  if (payload.deviceInfo) {
+    await persistDeviceInfo(payload.deviceInfo, { overwrite: false });
+  }
+
+  return {
+    str: 'success',
+    issuedAt: payload.issuedAt || null,
+  };
 }
 
 // Function for adding the device to db in W1 and linking it to the user input account details
@@ -665,7 +887,9 @@ module.exports = {
   checkAuthToken,
   ensureValidAccessToken,
   refreshIfExpiringSoon,
+  refreshIfExpiringSoonWithStatus,
   clearLocalLinkState,
+  persistAlertCredential,
   persistDeviceInfo,
   persistToken,
   persistTokenPair,
@@ -678,6 +902,7 @@ module.exports = {
   requestLinking,
   requestUnlinking,
   requestLinkReset,
+  syncRshakeAlertCredential,
   refreshAuthToken,
   buildW1BaseUrl,
   fetchRemoteLinkState,

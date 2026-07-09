@@ -10,6 +10,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const deviceService = require('../services/device.service');
 const { responseCodes } = require('./responseCodes');
+const metricsService = require('../services/metrics.service');
 
 const allowInsecureTls = String(process.env.HEALTH_ALLOW_INSECURE_TLS || '').trim().toLowerCase() === 'true';
 const httpsAgent = allowInsecureTls
@@ -26,6 +27,17 @@ const defaultRingserverPort = Number(process.env.RINGSERVER_DEFAULT_PORT || 1800
 const ringserverTcpTimeoutMs = Number(process.env.RINGSERVER_TCP_TIMEOUT_MS || 5000);
 const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
 const serversListPath = () => path.join(localDbDir(), 'servers.json');
+const tokenRefreshAlertStatePath = process.env.TOKEN_REFRESH_ALERT_STATE_FILE
+  || path.join(localDbDir(), 'token-refresh-alert-state.json');
+const autoUpdateStatePath = process.env.AUTO_UPDATE_STATE_FILE || '/var/lib/upri-sender/update-state.json';
+const autoUpdateFallbackStatePath = '/tmp/upri-sender/update-state.json';
+const autoUpdateLegacyStatePath = '/tmp/upri-sender-auto-update-state.env';
+const watchdogStatePath = process.env.WATCHDOG_STATE_FILE || '/var/lib/upri-sender/watchdog-state.env';
+const watchdogFallbackStatePath = '/tmp/upri-sender/watchdog-state.env';
+const diskAlertStatePath = process.env.DISK_ALERT_STATE_FILE || '/var/lib/upri-sender/disk-alert-state.env';
+const diskAlertFallbackStatePath = '/tmp/upri-sender/disk-alert-state.env';
+const remoteTunnelStatePath = process.env.REMOTE_TUNNEL_STATE_FILE || '/var/lib/upri-sender/remote-tunnel-state.json';
+const remoteTunnelFallbackStatePath = '/tmp/upri-sender/remote-tunnel-state.json';
 const fsp = fs.promises;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,6 +48,82 @@ const cpuSampleCacheMs = Number(process.env.RESOURCE_CPU_CACHE_MS || cpuSampleWi
 let cachedCpuSample = null;
 let cachedCpuSampleAt = 0;
 let cachedCpuSamplePromise = null;
+
+function coerceScalar(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed.length) return '';
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) return numeric;
+  return trimmed;
+}
+
+async function readJsonStateFile(filePath) {
+  const raw = await fsp.readFile(filePath, 'utf-8');
+  return JSON.parse(raw);
+}
+
+async function readFirstJsonState(paths = []) {
+  for (const statePath of paths) {
+    if (!statePath) continue;
+    try {
+      const parsed = await readJsonStateFile(statePath);
+      return {
+        available: true,
+        path: statePath,
+        state: parsed,
+      };
+    } catch (_error) {
+      // continue searching fallback paths
+    }
+  }
+  return {
+    available: false,
+    path: paths.find(Boolean) || null,
+    state: null,
+  };
+}
+
+async function readEnvStateFile(filePath) {
+  const raw = await fsp.readFile(filePath, 'utf-8');
+  const parsed = {};
+  raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .forEach((line) => {
+      const separator = line.indexOf('=');
+      if (separator <= 0) return;
+      const key = line.slice(0, separator).trim();
+      const value = line.slice(separator + 1).trim();
+      if (!key) return;
+      parsed[key] = coerceScalar(value);
+    });
+  return parsed;
+}
+
+async function readFirstEnvState(paths = []) {
+  for (const statePath of paths) {
+    if (!statePath) continue;
+    try {
+      const parsed = await readEnvStateFile(statePath);
+      return {
+        available: true,
+        path: statePath,
+        state: parsed,
+      };
+    } catch (_error) {
+      // continue searching fallback paths
+    }
+  }
+  return {
+    available: false,
+    path: paths.find(Boolean) || null,
+    state: null,
+  };
+}
 
 async function sampleCpuUsage(sampleWindowMs = cpuSampleWindow) {
   const start = os.cpus();
@@ -391,6 +479,7 @@ function buildNtpTargets() {
 }
 
 async function networkHealth(req, res) {
+  const startedAt = Date.now();
   const target = buildTarget();
   const responsePayload = {
     target,
@@ -443,6 +532,25 @@ async function networkHealth(req, res) {
     );
   }
 
+  const ringserversOk = responsePayload.ringservers.length === 0
+    || responsePayload.ringservers.every((entry) => entry?.dns?.ok && entry?.tcp?.ok);
+  const overallOk = Boolean(
+    responsePayload.dns?.ok
+    && responsePayload.tcp?.ok
+    && responsePayload.https?.ok
+    && ringserversOk
+  );
+
+  metricsService.recordHealthCheck('network', {
+    ok: overallOk,
+    durationMs: Date.now() - startedAt,
+    meta: {
+      targetHost: target.hostname,
+      ringserverCount: responsePayload.ringservers.length,
+      ringserversOk,
+    },
+  });
+
   res.status(200).json({
     status: responseCodes.HEALTH_NETWORK_SUCCESS,
     message: 'Network health check complete',
@@ -451,6 +559,7 @@ async function networkHealth(req, res) {
 }
 
 async function timeHealth(req, res) {
+  const startedAt = Date.now();
   const targets = buildNtpTargets();
   const attempts = [];
 
@@ -487,6 +596,14 @@ async function timeHealth(req, res) {
           attempts,
         }
       });
+      metricsService.recordHealthCheck('time', {
+        ok: true,
+        durationMs: Date.now() - startedAt,
+        meta: {
+          targetHost: target.hostname,
+          attempts: attempts.length,
+        },
+      });
       return;
     } catch (error) {
       attempts.push({
@@ -504,9 +621,17 @@ async function timeHealth(req, res) {
     error: 'Unable to reach any configured NTP hosts',
     payload: { attempts },
   });
+  metricsService.recordHealthCheck('time', {
+    ok: false,
+    durationMs: Date.now() - startedAt,
+    meta: {
+      attempts: attempts.length,
+    },
+  });
 }
 
 async function resourcesHealth(req, res) {
+  const startedAt = Date.now();
   try {
     const [disk, cpu] = await Promise.all([
       readDiskUsage(defaultDiskPath),
@@ -521,10 +646,95 @@ async function resourcesHealth(req, res) {
         cpu,
       },
     });
+    metricsService.recordHealthCheck('resources', {
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      meta: {
+        diskPath: disk.path,
+        cpuCores: cpu.cores,
+      },
+    });
   } catch (error) {
     res.status(500).json({
       status: responseCodes.HEALTH_RESOURCES_ERROR,
       message: 'Unable to read host resource usage',
+      error: error.message,
+    });
+    metricsService.recordHealthCheck('resources', {
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      meta: {
+        error: error.message,
+      },
+    });
+  }
+}
+
+async function senderState(req, res) {
+  const startedAt = Date.now();
+  try {
+    const [tokenRefreshState, autoUpdateJsonState, autoUpdateLegacyState, watchdogState, diskState, remoteTunnelState] = await Promise.all([
+      readFirstJsonState([tokenRefreshAlertStatePath]),
+      readFirstJsonState([autoUpdateStatePath, autoUpdateFallbackStatePath]),
+      readFirstEnvState([autoUpdateLegacyStatePath]),
+      readFirstEnvState([watchdogStatePath, watchdogFallbackStatePath]),
+      readFirstEnvState([diskAlertStatePath, diskAlertFallbackStatePath]),
+      readFirstJsonState([remoteTunnelStatePath, remoteTunnelFallbackStatePath]),
+    ]);
+
+    const autoUpdate = autoUpdateJsonState.available
+      ? autoUpdateJsonState
+      : autoUpdateLegacyState;
+
+    res.status(200).json({
+      status: responseCodes.HEALTH_SENDER_STATE_SUCCESS,
+      message: 'Sender state snapshot',
+      payload: {
+        checkedAt: new Date().toISOString(),
+        tokenRefreshAlerts: tokenRefreshState,
+        autoUpdate,
+        watchdog: watchdogState,
+        diskAlerts: diskState,
+        remoteTunnel: remoteTunnelState,
+      },
+    });
+    metricsService.recordHealthCheck('senderState', {
+      ok: true,
+      durationMs: Date.now() - startedAt,
+      meta: {
+        autoUpdateAvailable: Boolean(autoUpdate?.available),
+        watchdogAvailable: Boolean(watchdogState?.available),
+        diskStateAvailable: Boolean(diskState?.available),
+        remoteTunnelAvailable: Boolean(remoteTunnelState?.available),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: responseCodes.HEALTH_SENDER_STATE_ERROR,
+      message: 'Unable to read sender state snapshot',
+      error: error.message,
+    });
+    metricsService.recordHealthCheck('senderState', {
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      meta: {
+        error: error.message,
+      },
+    });
+  }
+}
+
+function healthMetrics(req, res) {
+  try {
+    res.status(200).json({
+      status: responseCodes.HEALTH_METRICS_SUCCESS,
+      message: 'Sender metrics snapshot',
+      payload: metricsService.getMetricsSnapshot(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: responseCodes.HEALTH_METRICS_ERROR,
+      message: 'Unable to read sender metrics snapshot',
       error: error.message,
     });
   }
@@ -534,4 +744,6 @@ module.exports = {
   networkHealth,
   timeHealth,
   resourcesHealth,
+  senderState,
+  healthMetrics,
 };

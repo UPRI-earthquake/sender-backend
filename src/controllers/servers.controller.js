@@ -8,6 +8,172 @@ const { responseCodes, responseMessages } = require('./responseCodes')
 
 const localDbDir = () => process.env.LOCALDBS_DIRECTORY || './localDBs';
 const serversFilePath = () => path.join(localDbDir(), 'servers.json');
+const DEFAULT_RINGSERVER_USERNAME_FALLBACK = 'UPRI';
+const DEFAULT_RINGSERVER_URL_FALLBACK = 'earthquake.up.edu.ph:16000';
+
+function parseBooleanEnv(value, defaultValue = false) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return defaultValue;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === '1'
+    || normalized === 'true'
+    || normalized === 'yes'
+    || normalized === 'on';
+}
+
+function normalizeServerUrl(url) {
+  return String(url || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/g, '')
+    .toLowerCase();
+}
+
+function getDefaultRingserverConfig() {
+  const configuredUsername = String(
+    process.env.DEFAULT_RINGSERVER_USERNAME || DEFAULT_RINGSERVER_USERNAME_FALLBACK,
+  ).trim();
+  const configuredUrl = String(process.env.DEFAULT_RINGSERVER_URL || '').trim();
+  return {
+    username: configuredUsername || DEFAULT_RINGSERVER_USERNAME_FALLBACK,
+    url: configuredUrl,
+  };
+}
+
+function autoAddDefaultRingserverEnabled() {
+  const defaultEnabled = process.env.NODE_ENV === 'test' ? false : true;
+  return parseBooleanEnv(process.env.AUTO_ADD_DEFAULT_RINGSERVER_ON_LINK, defaultEnabled);
+}
+
+function autoEnsureDefaultRingserverOnStartupEnabled() {
+  const defaultEnabled = process.env.NODE_ENV === 'test' ? false : true;
+  return parseBooleanEnv(process.env.AUTO_ADD_DEFAULT_RINGSERVER_ON_STARTUP, defaultEnabled);
+}
+
+function getProtectedRingserverConfig() {
+  const defaultConfig = getDefaultRingserverConfig();
+  return {
+    username: String(process.env.PROTECTED_RINGSERVER_USERNAME || defaultConfig.username || '').trim(),
+    url: String(process.env.PROTECTED_RINGSERVER_URL || defaultConfig.url || '').trim(),
+  };
+}
+
+function isProtectedRingserver(entry = {}) {
+  const { username, url } = getProtectedRingserverConfig();
+  const entryUsername = String(entry.institutionName || '').trim();
+  if (username && entryUsername.toLowerCase() === username.toLowerCase()) {
+    return true;
+  }
+  if (url && normalizeServerUrl(entry.url) === normalizeServerUrl(url)) {
+    return true;
+  }
+  return false;
+}
+
+async function resolveDefaultRingserverTarget() {
+  const { username: defaultUsername, url: defaultUrl } = getDefaultRingserverConfig();
+  if (defaultUrl) {
+    return {
+      institutionName: defaultUsername,
+      url: defaultUrl,
+    };
+  }
+
+  const ringserverHosts = await serversService.requestRingserverHostsList();
+  if (!Array.isArray(ringserverHosts) || ringserverHosts.length === 0) {
+    return null;
+  }
+
+  const matchedHost = ringserverHosts.find((host) => {
+    const candidate = String(host?.username || '').trim();
+    return candidate.toLowerCase() === defaultUsername.toLowerCase();
+  });
+
+  if (!matchedHost) {
+    if (defaultUsername.toLowerCase() === DEFAULT_RINGSERVER_USERNAME_FALLBACK.toLowerCase()) {
+      return {
+        institutionName: defaultUsername,
+        url: DEFAULT_RINGSERVER_URL_FALLBACK,
+      };
+    }
+    return null;
+  }
+
+  const ringserverUrl = String(matchedHost.ringserverUrl || '').trim();
+  const ringserverPort = String(matchedHost.ringserverPort || '').trim();
+  if (!ringserverUrl || !ringserverPort) {
+    return null;
+  }
+
+  return {
+    institutionName: String(matchedHost.username || defaultUsername),
+    url: `${ringserverUrl}:${ringserverPort}`,
+  };
+}
+
+async function ensureDefaultRingserver() {
+  const target = await resolveDefaultRingserverTarget();
+  if (!target?.url) {
+    return { attempted: true, added: false, reason: 'default-ringserver-unresolved' };
+  }
+
+  const existingServers = await readLocalServersList();
+  const targetUrlNormalized = normalizeServerUrl(target.url);
+  const duplicate = existingServers.find((item) => normalizeServerUrl(item?.url) === targetUrlNormalized);
+  if (duplicate) {
+    return {
+      attempted: true,
+      added: false,
+      reason: 'already-exists',
+      server: duplicate,
+    };
+  }
+
+  const newServer = {
+    institutionName: target.institutionName,
+    url: target.url,
+  };
+
+  existingServers.push(newServer);
+  await writeLocalServersList(existingServers);
+  await streamUtils.addNewStream(newServer.url, newServer.institutionName);
+  await streamUtils.spawnSlink2dali(newServer.url);
+
+  return {
+    attempted: true,
+    added: true,
+    reason: 'added',
+    server: newServer,
+  };
+}
+
+async function ensureDefaultRingserverAfterLink() {
+  if (!autoAddDefaultRingserverEnabled()) {
+    return { attempted: false, added: false, reason: 'auto-add-disabled' };
+  }
+
+  return ensureDefaultRingserver();
+}
+
+async function ensureDefaultRingserverOnStartup() {
+  if (!autoEnsureDefaultRingserverOnStartupEnabled()) {
+    return { attempted: false, added: false, reason: 'startup-auto-add-disabled' };
+  }
+
+  try {
+    await deviceService.ensureValidAccessToken({ skipAlertCredentialSync: true });
+  } catch (error) {
+    return {
+      attempted: false,
+      added: false,
+      reason: error?.code === 'RELINK_REQUIRED' ? 'device-not-linked' : 'token-check-failed',
+      errorMessage: error?.message || String(error),
+    };
+  }
+
+  return ensureDefaultRingserver();
+}
 
 async function readLocalServersList() {
   try {
@@ -130,8 +296,15 @@ async function removeServer(req, res) {
       });
     }
 
-    // Attempt remote cleanup on the associated brgy account
     const targetServer = existingServers[index] || {};
+    if (isProtectedRingserver(targetServer)) {
+      return res.status(409).json({
+        status: responseCodes.REMOVE_SERVER_ERROR,
+        message: 'Protected default ringserver cannot be removed',
+      });
+    }
+
+    // Attempt remote cleanup on the associated brgy account
     const brgyUsername = targetServer.institutionName;
     const { streamId } = await deviceService.getStoredDeviceInfo();
     if (brgyUsername && streamId) {
@@ -176,4 +349,11 @@ async function removeServer(req, res) {
   }
 }
 
-module.exports = { getRingserverHosts, addServer, removeServer, linkingStatusCheck };
+module.exports = {
+  getRingserverHosts,
+  addServer,
+  removeServer,
+  linkingStatusCheck,
+  ensureDefaultRingserverAfterLink,
+  ensureDefaultRingserverOnStartup,
+};

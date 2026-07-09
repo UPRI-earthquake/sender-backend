@@ -582,6 +582,22 @@
         }
       }
     },
+    "/health/metrics": {
+      "get": {
+        "summary": "Export sender in-process metrics and health trend history snapshot",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Sender metrics snapshot"
+          },
+          "500": {
+            "description": "Unable to read sender metrics snapshot"
+          }
+        }
+      }
+    },
     "/health/time": {
       "get": {
         "summary": "Verify NTP reachability and clock offset",
@@ -717,6 +733,22 @@
         }
       }
     },
+    "/health/sender-state": {
+      "get": {
+        "summary": "Read sender operational state snapshots from local state files",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Sender state snapshot"
+          },
+          "500": {
+            "description": "Unable to read sender state snapshot"
+          }
+        }
+      }
+    },
     "/servers/ringserver-hosts": {
       "get": {
         "summary": "Get list of valid ringserver hosts registered in W1",
@@ -751,7 +783,7 @@
                           },
                           "ringserverUrl": {
                             "type": "string",
-                            "example": "https://earthquake.science.upd.edu.ph"
+                            "example": "https://earthquake.up.edu.ph"
                           },
                           "ringserverPort": {
                             "type": "number",
@@ -812,7 +844,7 @@
                   }
                 },
                 "example": {
-                  "url": "https://earthquake.science.upd.edu.ph",
+                  "url": "https://earthquake.up.edu.ph",
                   "hostName": "UPRI's Ringserver"
                 }
               }
@@ -937,7 +969,7 @@
                   "url"
                 ],
                 "example": {
-                  "url": "https://earthquake.science.upd.edu.ph"
+                  "url": "https://earthquake.up.edu.ph"
                 }
               }
             }

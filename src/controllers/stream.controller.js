@@ -58,7 +58,15 @@ async function getStreamingStatus(req, res) {
   for (const url in streamsObject) {
     if (streamsObject.hasOwnProperty(url)) {
       const streamEntry = streamsObject[url];
-      if (streamEntry.retryCount === 0 && streamEntry.childProcess && !streamEntry.childProcess.killed && streamEntry.status !== 'Streaming') {
+      const liveChild = streamUtils.isChildProcessAlive(streamEntry.childProcess);
+
+      // Prevent stale "Streaming" tags when the worker already exited.
+      if (streamEntry.status === 'Streaming' && !liveChild) {
+        const fallbackStatus = streamEntry.retryCount > 0 ? 'Connecting' : 'Not Streaming';
+        await streamUtils.updateStreamStatus(url, null, false, false, fallbackStatus);
+      }
+
+      if (streamEntry.retryCount === 0 && liveChild && streamEntry.status !== 'Streaming') {
         await streamUtils.updateStreamStatus(url, streamEntry.childProcess, false, true);
       }
       const { status, institutionName, retryCount, logs } = streamsObject[url];

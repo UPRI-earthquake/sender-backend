@@ -4,6 +4,19 @@ const bodyParser = require('body-parser')
 const swaggerJsDoc = require('swagger-jsdoc')
 const swaggerUi = require('swagger-ui-express')
 const fs = require('fs')
+const metricsService = require('./services/metrics.service')
+
+const structuredLogsEnabled = String(process.env.SENDER_STRUCTURED_LOGS || 'false').trim().toLowerCase() === 'true';
+
+function emitStructuredLog(eventType, payload = {}) {
+  if (!structuredLogsEnabled) return;
+  const entry = {
+    ts: new Date().toISOString(),
+    event: eventType,
+    ...payload,
+  };
+  console.log(JSON.stringify(entry));
+}
 
 const app = express()
 
@@ -35,6 +48,28 @@ const healthRouter = require('./routes/health.route')
 app.use(cors())
 
 app.use(bodyParser.json())
+
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const elapsedNs = process.hrtime.bigint() - start;
+    const durationMs = Number(elapsedNs) / 1e6;
+    const requestPath = req.path || req.originalUrl || '/';
+    metricsService.recordHttpRequest({
+      method: req.method,
+      path: requestPath,
+      statusCode: res.statusCode,
+      durationMs,
+    });
+    emitStructuredLog('http.request', {
+      method: req.method,
+      path: requestPath,
+      statusCode: res.statusCode,
+      durationMs: Number(durationMs.toFixed(1)),
+    });
+  });
+  next();
+});
 
 app.use('/device', deviceRouter)
 app.use('/servers', serversRouter)

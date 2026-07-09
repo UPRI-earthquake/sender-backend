@@ -46,6 +46,21 @@ router.get('/network', healthController.networkHealth);
 
 /**
  * @swagger
+ * /health/metrics:
+ *   get:
+ *     summary: Export sender in-process metrics and health trend history snapshot
+ *     tags:
+ *       - Health
+ *     responses:
+ *       200:
+ *         description: Sender metrics snapshot
+ *       500:
+ *         description: Unable to read sender metrics snapshot
+ */
+router.get('/metrics', healthController.healthMetrics);
+
+/**
+ * @swagger
  * /health/time:
  *   get:
  *     summary: Verify NTP reachability and clock offset
@@ -141,5 +156,20 @@ router.get('/time', healthController.timeHealth);
  *         description: Unable to read host resource usage
  */
 router.get('/resources', healthController.resourcesHealth);
+
+/**
+ * @swagger
+ * /health/sender-state:
+ *   get:
+ *     summary: Read sender operational state snapshots from local state files
+ *     tags:
+ *       - Health
+ *     responses:
+ *       200:
+ *         description: Sender state snapshot
+ *       500:
+ *         description: Unable to read sender state snapshot
+ */
+router.get('/sender-state', healthController.senderState);
 
 module.exports = router;
