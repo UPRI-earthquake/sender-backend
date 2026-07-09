@@ -582,6 +582,22 @@
         }
       }
     },
+    "/health/metrics": {
+      "get": {
+        "summary": "Export sender in-process metrics and health trend history snapshot",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Sender metrics snapshot"
+          },
+          "500": {
+            "description": "Unable to read sender metrics snapshot"
+          }
+        }
+      }
+    },
     "/health/time": {
       "get": {
         "summary": "Verify NTP reachability and clock offset",
@@ -713,6 +729,22 @@
           },
           "500": {
             "description": "Unable to read host resource usage"
+          }
+        }
+      }
+    },
+    "/health/sender-state": {
+      "get": {
+        "summary": "Read sender operational state snapshots from local state files",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Sender state snapshot"
+          },
+          "500": {
+            "description": "Unable to read sender state snapshot"
           }
         }
       }

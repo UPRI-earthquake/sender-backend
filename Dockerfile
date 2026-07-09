@@ -2,8 +2,8 @@ ARG BUNDLE_VERSION=dev
 ARG BUNDLE_TAG=latest
 ARG VCS_REF=unknown
 
-# Stage 1: Build slin2kdali for node18-alpine as build env
-FROM arm32v7/node:18-alpine AS build-env
+# Stage 1: Build slin2kdali for node22-alpine as build env
+FROM arm32v7/node:22-alpine3.20 AS build-env
 
 RUN apk add --no-cache build-base # install build tools
 
@@ -18,7 +18,7 @@ RUN make
 #RUN apk add --no-cache python3 make g++
 
 # Stage 2: prod for nodejs, adds src code, pre-installs js deps
-FROM arm32v7/node:18-alpine AS prod
+FROM arm32v7/node:22-alpine3.20 AS prod
 ARG BUNDLE_VERSION
 ARG BUNDLE_TAG
 ARG VCS_REF
